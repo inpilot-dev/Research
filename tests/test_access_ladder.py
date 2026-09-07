@@ -195,7 +195,8 @@ class SacredList(unittest.TestCase):
     """경계는 문서가 아니라 코드다 — 자격증명·CAPTCHA·폼 입력 경로가 존재하지 않는다."""
 
     PATH = os.path.join(os.path.dirname(__file__), "..", "scripts", "access_ladder.py")
-    SOURCE = open(PATH, encoding="utf-8").read()
+    with open(PATH, encoding="utf-8") as _f:
+        SOURCE = _f.read()
     CODE = _executable_only(SOURCE)   # 주석·독스트링은 뺀다 — 금지 API 를 "안 쓴다"고 적을 수는 있어야 한다
 
     def _forbid(self, *tokens):
