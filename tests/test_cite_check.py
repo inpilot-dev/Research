@@ -44,7 +44,8 @@ class CiteCheck(unittest.TestCase):
         ]
         out = cc.check(items, fetcher=fake_fetch)
         s = out["summary"]
-        self.assertEqual((s["n"], s["alive"], s["exact"], s["none"], s["blocked"]), (5, 4, 2, 2, 1))
+        # 404 is dead → blocked (never read); pdf is its own kind; none only from a real match miss
+        self.assertEqual((s["n"], s["alive"], s["exact"], s["none"], s["blocked"], s["unsupported_pdf"]), (5, 4, 2, 0, 2, 1))
         self.assertEqual(s["unique_publishers"], 4)  # www.nejm.org == nejm.org
         self.assertEqual(out["results"][3]["found"], "unsupported-pdf")
         self.assertEqual(out["results"][4]["found"], "blocked")  # 확인 불가 ≠ 근거 없음

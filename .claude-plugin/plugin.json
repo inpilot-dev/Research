@@ -1,0 +1,12 @@
+{
+  "name": "verify",
+  "version": "0.1.0",
+  "description": "리서치 산출물의 주장을 출처 원문과 기계적으로 대조한다. 검증 못 한 주장은 '미확인'으로만 나간다. LLM 없는 결정론적 코어 + 얇은 스킬 래퍼.",
+  "author": {
+    "name": "SEUNGBIN MIN",
+    "url": "https://github.com/inpilot-dev"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/inpilot-dev/Research",
+  "keywords": ["research", "verify", "citation", "fact-check", "grounding"]
+}
