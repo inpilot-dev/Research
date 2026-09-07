@@ -1,0 +1,4 @@
+# 선택 사항 — 접근 사다리의 칸 3·4에서만 쓴다. 없으면 그 칸을 건너뛰고 감사 로그에 남는다.
+# 코어(scripts/cite_check.py)는 표준 라이브러리만 쓴다 (ADR 0001).
+curl_cffi>=0.7      # 칸 3: TLS 위장. 봇 벽(403·Cloudflare)에 유효. 대상 ToS 확인은 사용자 몫.
+playwright>=1.44    # 칸 4: 비로그인 헤드리스 렌더링. 설치 후 `playwright install chromium` 필요.
