@@ -177,9 +177,12 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
             row["trace"] = trace
         results.append(row)
     kinds = [r["found"] for r in results]
+    usage = getattr(fetcher, "usage", None)
     summary = {"n": len(results), "alive": sum(r["alive"] for r in results),
                **{k.replace("-", "_"): kinds.count(k) for k in KINDS},
                "unique_publishers": len({r["publisher"] for r in results})}
+    if usage:
+        summary["api_usage"] = dict(usage)
     return {"results": results, "summary": summary}
 
 
@@ -265,6 +268,9 @@ def render(out, deep_requested=False):
           f"- 판정: exact {s['exact']} / fuzzy {s['fuzzy']} / none {s['none']} / blocked {s['blocked']} / pdf {s['unsupported_pdf']}",
           f"- 독립 퍼블리셔 {s['unique_publishers']} (www. 제거한 호스트 기준; 순환보고 1차 근사)",
           f"- 검증 깊이: {depth}"]
+    for api, meta in sorted((s.get("api_usage") or {}).items()):
+        # "학술 API 는 공짜" 를 전제하지 않는다 — 응답이 알려준 비용·잔여를 그대로 적는다.
+        L.append(f"- {api} 사용량: " + " · ".join(f"{k}={v}" for k, v in sorted(meta.items())))
     if s.get("unsourced"):
         L.append(f"- 출처 없음 {s['unsourced']}건 — 링크 없이 단정한 문장. 검증 대상에 오르지도 못했다")
     L += _access_log(r) + [
@@ -301,11 +307,23 @@ def load_claims(path):
     with (sys.stdin if path == "-" else open(path, encoding="utf-8")) as f:
         text = f.read()
     try:
-        return json.loads(text), 0
+        items = json.loads(text)
+        return [{**i, "url": _canonical(i["url"])} for i in items], 0
     except ValueError:
         from extract_claims import parse           # lazy: the core still runs without it
         doc = parse(text)
         return doc["claims"], len(doc["unsourced"])
+
+
+def _canonical(token):
+    """벌거벗은 DOI·PMID 를 사람이 여는 주소로 편다. 못 알아보면 그대로 둔다."""
+    if re.match(r"^\w+://", token or ""):
+        return token
+    try:
+        from adapters import canonical_url
+        return canonical_url(token)
+    except Exception:
+        return token
 
 
 def unverified_count(summary):

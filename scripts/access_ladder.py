@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import adapters  # noqa: E402
 from cite_check import UA, alive, extract, has_source_text, publisher  # noqa: E402
 
 # ── 사유 코드 ────────────────────────────────────────────────────────────────
@@ -177,19 +178,6 @@ def _get(url, timeout, ua=UA, headers=None):
         return None, "", ""   # HTTPException: IncompleteRead is neither OSError nor URLError
 
 
-# ── 칸 1: 공개 API 어댑터 ────────────────────────────────────────────────────
-# ponytail: 지금은 PubMed 하나. #5(어댑터 레지스트리)가 Crossref·OpenAlex 로 넓히면서 이걸 흡수한다.
-def _pubmed(url, timeout):
-    m = re.search(r"pubmed\.ncbi\.nlm\.nih\.gov/(\d+)", url) or re.search(r"[?&]term=(\d+)", url)
-    if not m:
-        return None
-    api = ("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-           f"?db=pubmed&id={m.group(1)}&rettype=abstract&retmode=text")
-    return _get(api, timeout)
-
-
-ADAPTERS = {"pubmed.ncbi.nlm.nih.gov": _pubmed, "www.ncbi.nlm.nih.gov": _pubmed}
-
 # 칸 5가 사용자의 브라우저에서 돌리는 스크립트 — 전문이 여기 있다. 여는 것·기다리는 것·읽는 것·
 # 닫는 것뿐이다. 사람이 하는 순서와 같다: 탭에서 열고, 화면이 자리잡길 잠깐 기다리고, 읽는다.
 # 기다리는 것은 로딩을 기다리는 것이지 CAPTCHA 를 푸는 것이 아니다 — 그건 하지 않는다.
@@ -210,8 +198,9 @@ await closeTab(t);"""
 class AccessLadder:
     """cite_check 에 주입하는 fetcher. 호출부는 (status, ctype, body) 만 본다."""
 
-    def __init__(self, *, tls=True, extractor=True, session=True, budget=30.0,
+    def __init__(self, *, tls=True, extractor=True, session=True, budget=30.0, registry=None,
                  allow_session=None, consent=None, clock=time.monotonic, rungs=None, robots=None):
+        self.registry = registry if registry is not None else adapters.Registry()
         self.tls, self.extractor, self.session_enabled = tls, extractor, session
         self.budget, self.clock, self.trace = budget, clock, {}
         self.consent = consent                      # (host) -> bool. 없으면 묻지 않고 거절로 본다.
@@ -271,11 +260,14 @@ class AccessLadder:
         return _get(url, timeout)
 
     def _adapter(self, url, timeout, tr, left):
-        fn = ADAPTERS.get(urlparse(url).netloc.lower())
-        if not fn:
+        self.registry.used = None          # 앞 URL 이 쓴 어댑터가 이 URL 에 눌러붙지 않게
+        status, ctype, body = self.registry.fetch(url, timeout)
+        if status is None:
             tr["attempts"].append("1:어댑터 없음")
             return None
-        return fn(url, timeout)
+        if self.registry.used:
+            tr["adapter"] = self.registry.used
+        return status, ctype, body
 
     @rung(forwards_url=True)
     def _extractor(self, url, timeout, tr, left):
@@ -368,6 +360,11 @@ class AccessLadder:
             return True
         tr["attempts"].append("5:세션 미허용")           # 묻지 못했으면 시도하지 않는다
         return False
+
+    @property
+    def usage(self):
+        """어댑터 API 가 알려준 사용량·비용 — 감사 로그로 넘어간다."""
+        return self.registry.usage
 
     def _robots_ok_guarded(self, url, timeout):
         """robots 조회가 터져도 사다리 전체를 죽이지 않는다 — 못 읽으면 허용으로 본다."""

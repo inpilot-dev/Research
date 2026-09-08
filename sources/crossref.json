@@ -1,0 +1,30 @@
+{
+  "name": "crossref",
+  "label": "Crossref",
+  "hosts": [
+    "doi.org",
+    "dx.doi.org"
+  ],
+  "identifier": {
+    "scheme": "doi",
+    "pattern": "^10\\.\\d{4,9}/\\S+$",
+    "url_patterns": [
+      "doi\\.org/(10\\.[^\\s?#]+)"
+    ],
+    "canonical_url": "https://doi.org/{id}"
+  },
+  "endpoint": "https://api.crossref.org/works/{id}",
+  "auth": null,
+  "rate_limit_per_second": 5,
+  "text": {
+    "type": "json",
+    "fields": [
+      "message.title",
+      "message.subtitle",
+      "message.abstract"
+    ],
+    "landing": "message.URL"
+  },
+  "note": "서지와 랜딩 URL 을 해석한다. 초록은 있는 논문에만 있다 — 없으면 대조할 원문이 없는 것이므로 확인 불가.",
+  "priority": 1
+}

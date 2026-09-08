@@ -1,0 +1,25 @@
+{
+  "name": "pubmed",
+  "label": "PubMed E-utilities",
+  "hosts": [
+    "pubmed.ncbi.nlm.nih.gov",
+    "www.ncbi.nlm.nih.gov"
+  ],
+  "identifier": {
+    "scheme": "pmid",
+    "pattern": "^\\d{1,9}$",
+    "url_patterns": [
+      "pubmed\\.ncbi\\.nlm\\.nih\\.gov/(\\d+)",
+      "[?&]term=(\\d+)"
+    ],
+    "canonical_url": "https://pubmed.ncbi.nlm.nih.gov/{id}/"
+  },
+  "endpoint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={id}&rettype=abstract&retmode=text",
+  "auth": null,
+  "rate_limit_per_second": 3,
+  "text": {
+    "type": "plain"
+  },
+  "note": "HTML 페이지는 봇 벽이 203을 돌려준다(실측). 키 없이 3 req/s 가 NCBI 공표 한도.",
+  "priority": 1
+}
