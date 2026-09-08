@@ -1,0 +1,15 @@
+{
+  "name": "inpilot-research",
+  "owner": {
+    "name": "SEUNGBIN MIN",
+    "url": "https://github.com/inpilot-dev"
+  },
+  "plugins": [
+    {
+      "name": "verify",
+      "source": "./",
+      "description": "리서치 산출물의 주장을 출처 원문과 기계적으로 대조한다. 검증 못 한 주장은 '미확인'으로만 나간다."
+    }
+  ],
+  "description": "주장을 출처 원문까지 뚫고 들어가 대조하는 리서치 검증 도구."
+}
