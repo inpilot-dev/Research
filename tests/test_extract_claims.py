@@ -90,3 +90,33 @@ class Extract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentIntoTheCore(unittest.TestCase):
+    """문서를 그대로 넣었을 때 코어가 알아서 주장을 뽑고, 출처 없는 단정문을 센다."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        import cite_check
+        self.cc = cite_check
+
+    def test_a_markdown_document_is_accepted_where_claims_json_is(self):
+        items, unsourced = self.cc.load_claims(FIXTURE)
+        self.assertGreaterEqual(len(items), 10)
+        self.assertEqual(unsourced, 4)
+        self.assertTrue(all(set(i) == {"claim", "url"} for i in items))
+
+    def test_a_claims_json_still_loads_unchanged(self):
+        import json
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump([{"claim": "a claim here", "url": "https://x.example/1"}], f)
+        items, unsourced = self.cc.load_claims(f.name)
+        os.unlink(f.name)
+        self.assertEqual((len(items), unsourced), (1, 0))
+
+    def test_the_audit_log_counts_the_unsourced_assertions(self):
+        out = self.cc.check([{"claim": "x y z w", "url": "https://x.example/1"}],
+                            fetcher=lambda u, t: (404, "", ""))
+        out["summary"]["unsourced"] = 4
+        self.assertIn("출처 없음 4건", self.cc.render(out))

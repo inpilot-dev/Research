@@ -264,7 +264,10 @@ def render(out, deep_requested=False):
           f"- 입력 {s['n']}건 · 페치 URL {len({x['url'] for x in r})}개",
           f"- 판정: exact {s['exact']} / fuzzy {s['fuzzy']} / none {s['none']} / blocked {s['blocked']} / pdf {s['unsupported_pdf']}",
           f"- 독립 퍼블리셔 {s['unique_publishers']} (www. 제거한 호스트 기준; 순환보고 1차 근사)",
-          f"- 검증 깊이: {depth}"] + _access_log(r) + [
+          f"- 검증 깊이: {depth}"]
+    if s.get("unsourced"):
+        L.append(f"- 출처 없음 {s['unsourced']}건 — 링크 없이 단정한 문장. 검증 대상에 오르지도 못했다")
+    L += _access_log(r) + [
           "- 제외 사유:"] + [f"  - {_KO[k]}: {_WHY[k]}" for k in UNVERIFIED if s[k.replace("-", "_")]]
     return "\n".join(L) + "\n"
 
@@ -289,6 +292,22 @@ def _access_log(results):
     return L + ([f"  - {' · '.join(on)}"] if on else [])
 
 
+def load_claims(path):
+    """A claims JSON, or a research document we pull the claims out of.
+
+    → (items, unsourced_count). Feeding a report straight in is the common case; the count of
+    sentences that assert something with no link at all belongs in the audit log, not the bin.
+    """
+    with (sys.stdin if path == "-" else open(path, encoding="utf-8")) as f:
+        text = f.read()
+    try:
+        return json.loads(text), 0
+    except ValueError:
+        from extract_claims import parse           # lazy: the core still runs without it
+        doc = parse(text)
+        return doc["claims"], len(doc["unsourced"])
+
+
 def unverified_count(summary):
     return sum(summary[k.replace("-", "_")] for k in UNVERIFIED)
 
@@ -310,6 +329,7 @@ def main(argv=None, fetcher=None):
     a = ap.parse_args(argv)
     if a.deep:
         print("[cite_check] --deep: L3(의미적 뒷받침)는 v1 미구현 — L2(원문 대조)로 진행합니다.", file=sys.stderr)
+    items, unsourced = load_claims(a.file)
     if fetcher is None:
         fetcher = fetch
         if not a.no_access:  # lazy import: the core stays stdlib-only and the ladder stays optional
@@ -317,9 +337,8 @@ def main(argv=None, fetcher=None):
             allow = {h.strip(): True for h in a.allow_session.split(",") if h.strip()}
             fetcher = AccessLadder(tls=not a.no_tls, budget=a.budget,
                                    allow_session={**_load_allow(), **allow})
-    with (sys.stdin if a.file == "-" else open(a.file, encoding="utf-8")) as f:
-        items = json.load(f)
     out = check(items, a.fuzzy, a.timeout, fetcher=fetcher)
+    out["summary"]["unsourced"] = unsourced
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=2)

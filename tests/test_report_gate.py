@@ -1,4 +1,5 @@
 """Seam — the gate's verdict. A pure text function: report in, offending lines out."""
+import json
 import os
 import sys
 import unittest
@@ -80,3 +81,44 @@ class Gate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HookProtocol(unittest.TestCase):
+    """훅은 Claude Code 와의 계약이다 — 차단은 종료 코드 2 와 deny 응답으로 나간다."""
+
+    def run_hook(self, payload):
+        import subprocess
+        p = subprocess.run([sys.executable,
+                            os.path.join(os.path.dirname(__file__), "..", "hooks", "gate.py")],
+                           input=json.dumps(payload), capture_output=True, text=True)
+        return p.returncode, p.stdout
+
+    def test_an_untokened_report_is_denied_with_the_offending_line(self):
+        code, out = self.run_hook({"tool_name": "Write", "tool_input": {
+            "file_path": "/tmp/report.md",
+            "content": "# 검증 리포트\n\n## 검증됨 (1)\n\n- Remdesivir cured everyone in the trial.\n"}})
+        self.assertEqual(code, 2)
+        d = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(d["permissionDecision"], "deny")
+        self.assertIn("Remdesivir cured everyone", d["permissionDecisionReason"])
+
+    def test_a_clean_report_and_an_unrelated_file_both_pass(self):
+        for content in (GOOD, "# 회의록\n\n오늘 배포는 미뤘다. 다음 주에 다시 본다.\n"):
+            with self.subTest(content=content[:20]):
+                code, _ = self.run_hook({"tool_name": "Write",
+                                         "tool_input": {"file_path": "/tmp/x.md", "content": content}})
+                self.assertEqual(code, 0)
+
+    def test_an_edit_is_judged_on_the_text_it_would_leave_behind(self):
+        code, _ = self.run_hook({"tool_name": "Edit", "tool_input": {
+            "file_path": "/tmp/report.md", "old_string": "x",
+            "new_string": "## 검증됨 (1)\n\n- Mortality fell by half in the treatment arm.\n"}})
+        self.assertEqual(code, 2)
+
+    def test_an_unreadable_payload_does_not_block_every_write(self):
+        """하네스가 형식을 바꿨다고 모든 쓰기를 막으면 게이트가 아니라 고장이다."""
+        import subprocess
+        p = subprocess.run([sys.executable,
+                            os.path.join(os.path.dirname(__file__), "..", "hooks", "gate.py")],
+                           input="not json at all", capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0)
