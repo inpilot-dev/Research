@@ -30,6 +30,8 @@ QUICK = [
     "How many countries signed it?",
     "Who was the first person to hold that post?",
     "capital of that province 확인해줘",
+    "When was the World Health Organization founded?",
+    "그 기관은 언제 설립된 거야",
 ]
 UNSUPPORTED = [
     "오늘 점심 뭐 먹을까",

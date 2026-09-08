@@ -1,0 +1,114 @@
+# verify
+
+**주장을 출처 원문까지 뚫고 들어가 대조한다. 확인하지 못한 것은 "미확인"으로만 나간다.**
+
+리서치 도구는 많다. 이 도구가 하는 일은 리서치가 아니라 **검증**이다. 인용이 붙은 문장을 받아서 그 출처를 실제로 열고, 그 문장이 정말 거기 있는지 기계적으로 대조한다. 못 열었으면 못 열었다고 하고, 원문에 없으면 없다고 한다. 둘은 다른 말이며 이 도구는 그 둘을 절대 섞지 않는다.
+
+봇 벽·JS 렌더링·로그인 벽에 막히면 접근 사다리를 한 칸씩 올라가며 다시 시도한다. 끝내 못 뚫으면 **왜 막혔고 당신이 무엇을 하면 되는지**를 적어 돌려준다.
+
+## 설치
+
+```bash
+claude plugin marketplace add inpilot-dev/Research
+claude plugin install verify@inpilot-research
+```
+
+로컬 클론에서 쓰려면 `marketplace add` 에 클론 경로를 준다. 파이썬 3.9+ 외에 필요한 것이 없다 — 코어는 표준 라이브러리만 쓴다.
+
+## 30초 사용법
+
+**인용이 붙은 문서를 검증한다.**
+
+```bash
+/verify report.md
+```
+
+마크다운 리포트를 그대로 넣으면 링크와 그 링크가 붙은 문장을 짝지어 전부 대조한다. `claims.json`(`[{"claim":…, "url":…}]`)이나 DOI·PMID 목록도 받는다.
+
+**질문 하나를 근거까지 끌고 간다.**
+
+```bash
+/research 렘데시비르가 사망률을 낮췄나?
+```
+
+유형을 판별하고, 넓게 훑고 좁히고, **반대 근거를 최소 한 번 찾고**, 출처마다 격리된 읽기 전용 서브에이전트를 붙인 뒤, 모든 주장을 코어에 통과시켜 종합한다.
+
+**CLI 로도 쓴다.** 플러그인 없이 스크립트만 있으면 된다.
+
+```bash
+python3 scripts/cite_check.py report.md --report --json results.json > report.md
+python3 scripts/access_ladder.py https://pubmed.ncbi.nlm.nih.gov/32445440/
+python3 scripts/adapters.py 32445440 10.1056/NEJMoa2007764
+```
+
+### 나오는 것
+
+```
+## 검증됨 (1)
+- [pubmed.ncbi.nlm.nih.gov:exact] The primary outcome was the time to recovery… — L2 · 칸 1 공개 API
+
+## 미확인 (2)
+- 근거 없음: Remdesivir eliminated all mortality within three days. — https://pubmed…
+- 확인 불가: Kaplan-Meier estimates of mortality were 6.7%… — https://www.nejm.org/…
+  · 막힌 곳: 칸 6 · 사유: bot-wall
+  · 시도: 0:403 → 1:어댑터 없음 → 2:archive 429 → 3:건너뜀(curl_cffi 미설치) → 5:403
+  · 방안:
+    1. `curl_cffi` 를 설치하면 TLS 위장(칸 3)을 시도합니다: `pip install curl_cffi`
+    2. 브라우저에서 직접 열어 본문을 저장해 주시면 그 파일로 대조합니다
+```
+
+`근거 없음`은 **원문을 읽었고 그 문장이 없었다**는 뜻이다. `확인 불가`는 **원문을 못 읽었다**는 뜻이다. 이 구분이 이 도구의 전부다.
+
+## 자격증명은 성역이다
+
+에이전트는 당신의 비밀번호·키체인·브라우저 저장소를 **읽지 않는다.** 로그인 폼을 채우지 않고 CAPTCHA 를 풀지 않는다. 로그인 벽은 셋 중 하나로만 처리한다.
+
+1. **이미 로그인해 둔 브라우저 세션을 빌려 읽기만 한다** — 호스트별로 당신이 허락한 경우에만
+2. 사람에게 넘기고 무엇을 하면 되는지 알려준다
+3. 당신이 직접 발급한 API 키를 쓴다
+
+이유는 도덕이 아니라 실측이다. 웹 에이전트는 가져온 페이지에 심긴 지시문에 24~47% 확률로 넘어가고([arXiv:2604.27202](https://arxiv.org/abs/2604.27202)), 이 도구는 정의상 신뢰할 수 없는 페이지만 골라 읽는다. 비밀번호를 쥔 채 그런 페이지를 읽는 도구는 한 번의 인젝션으로 계정을 잃는다. 자세한 것은 [ADR 0004](docs/adr/0004-the-agent-never-holds-credentials.md).
+
+이 경계는 문서가 아니라 테스트다 — `tests/test_access_ladder.py` 가 브라우저에서 도는 스크립트의 **허용된 이름 목록**을 검사한다.
+
+## 아직 못 하는 것
+
+정직하게 적는다. 아래는 계획이 아니라 **현재 없는 기능**이다.
+
+| 못 하는 것 | 지금 어떻게 되나 |
+|---|---|
+| **L3 (의미적 뒷받침)** | `--deep` 을 줘도 안내만 하고 L2(원문 텍스트 대조)로 돈다. 바꿔 쓴 문장은 놓친다 |
+| **9유형 중 6개** | 뉴스·시장·법률·의학·코드·인물 유형은 슬롯만 있다. 라우터가 가장 엄격한 기준으로 처리하고 그렇게 했다고 말한다 |
+| **PDF 본문** | `미지원(PDF)` 로 표기된다. 추출기를 붙이지 않았다 |
+| **의학 모듈** | 사전등록(NCT)↔논문 결과 대조는 없다 |
+| **안티봇 에스컬레이션** | 칸 3(TLS 위장)·칸 4(헤드리스)는 `curl_cffi`·`playwright` 를 직접 설치해야 돈다. 없으면 건너뛰고 감사 로그에 남는다 |
+| **상충 판정** | 두 문장이 서로 모순인지는 리더가 **선언**해야 한다. 선언이 없으면 "상충 미판정"으로 적는다 |
+| **순환보고 판별** | 호스트 기준 1차 근사다. 같은 통신사 기사를 실은 서로 다른 매체는 아직 구분하지 못한다 |
+
+구현하지 않은 방법론 이름(GRADE·PRISMA 등)을 기능 이름으로 빌리지 않는다.
+
+## 어떻게 만들어져 있나
+
+| 조각 | 하는 일 |
+|---|---|
+| `scripts/cite_check.py` | 결정론적 코어. 판정은 전부 여기서 난다 (LLM 없음) |
+| `scripts/access_ladder.py` | 막힌 출처를 칸 0~6으로 다시 시도하고, 못 뚫으면 사유·방안을 적는다 |
+| `scripts/adapters.py` + `sources/*.json` | 출처 API 하나당 설정 파일 하나 |
+| `scripts/extract_claims.py` | 문서 → 주장·출처 짝 |
+| `scripts/route.py` + `profiles/types.json` | 질문 → 유형 → 신뢰성 기준 |
+| `scripts/report_gate.py` + `hooks/gate.py` | 토큰 없는 단정문이 파일로 나가는 것을 막는다. 끄는 스위치는 없다 |
+| `skills/verify`, `skills/research`, `agents/reader` | 얇은 래퍼. 판정을 다시 하지 않는다 |
+
+설계 결정은 [`docs/adr/`](docs/adr/), 조사 기록은 [`research/`](research/) 에 있다.
+
+## 테스트
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+네트워크도 LLM 도 쓰지 않는다.
+
+## MIT
+
+[LICENSE](LICENSE) 참조.
