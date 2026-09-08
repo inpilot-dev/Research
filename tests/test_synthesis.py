@@ -46,8 +46,9 @@ class Structure(unittest.TestCase):
     def test_the_publisher_count_is_computed_not_declared(self):
         """호출자가 선언하게 두면 주장 줄과 감사 로그의 숫자가 어긋난다."""
         md = sy.synthesize("q", ROUTE, corroborated(), META)
-        self.assertIn("퍼블리셔 2", md)
-        self.assertIn("독립 퍼블리셔 2", md)
+        self.assertIn("· 퍼블리셔 2 ·", md)                    # 이 주장을 뒷받침한 퍼블리셔
+        self.assertIn("그 출처들의 퍼블리셔 2곳", md)            # 읽으려 한 출처 전체
+        self.assertIn("각 줄에 적혀 있다", md)                   # 두 숫자가 다른 것임을 문서가 말한다
         self.assertEqual(sum(1 for x in md.splitlines() if x.startswith("- [")), 1)  # 한 줄로 합쳐진다
 
     def test_a_claim_below_the_bar_inside_확인된것_is_caught(self):

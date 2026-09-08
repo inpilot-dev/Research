@@ -85,9 +85,12 @@ def synthesize(question, route, claims, meta):
           f"(반복 {meta.get('iterations', 0)}/{meta.get('hardcap', 0)})",
           f"- 반대 근거 탐색 {len(meta.get('refutations') or [])}회"
           + (": " + " · ".join(_line(q) for q in (meta.get("refutations") or [])[:5]) if meta.get("refutations") else ""),
-          f"- 읽은 출처 {len({c['url'] for c in claims})}개 · 독립 퍼블리셔 "
-          f"{len({c['publisher'] for c in claims if c.get('publisher')})}"
-          f" · 이 유형의 최소 기준 {floor}"]
+          # 주장 줄의 "퍼블리셔 N" 은 그 문장 하나를 뒷받침한 퍼블리셔 수이고, 여기 숫자는
+          # 읽으려 한 출처 전체의 퍼블리셔 수다. 둘은 다른 값이므로 이름으로 구분해 둔다.
+          f"- 읽으려 한 출처 {len({c['url'] for c in claims})}개 · 그 출처들의 퍼블리셔 "
+          f"{len({c['publisher'] for c in claims if c.get('publisher')})}곳"
+          f" (주장 하나를 뒷받침한 퍼블리셔 수는 각 줄에 적혀 있다)",
+          f"- 이 유형이 요구하는 독립 퍼블리셔 최소 기준 {floor}"]
     if any(c.get("injection_suspect") for c in claims):
         L.append(f"- ⚠ 인젝션 의심 출처 {sum(1 for c in claims if c.get('injection_suspect'))}건 "
                  "— 그 페이지의 지시문은 따르지 않았다. 내용은 데이터로만 썼다")
@@ -97,7 +100,7 @@ def synthesize(question, route, claims, meta):
 _CLAIM_LINE = re.compile(r"^- \[[^\]]+:(?:exact|fuzzy[^\]]*)\] .+ — (L2|미검증) · 퍼블리셔 \d+ · \S+")
 
 
-_FLOOR = re.compile(r"이 유형의 최소 기준 (\d+)")
+_FLOOR = re.compile(r"독립 퍼블리셔 최소 기준 (\d+)")
 _PUBS = re.compile(r"· 퍼블리셔 (\d+) ·")
 
 
