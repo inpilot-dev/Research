@@ -56,6 +56,22 @@ def replay(directory=FIXTURES):
     return fetcher
 
 
+def write_index(directory=FIXTURES):
+    """녹화본 파일명은 해시다 — 사람이 무엇이 녹화됐는지 볼 수 있게 목록을 남긴다."""
+    rows = []
+    for fn in sorted(os.listdir(directory)):
+        if fn.endswith(".json"):
+            with open(os.path.join(directory, fn), encoding="utf-8") as f:
+                d = json.load(f)
+            rows.append((fn, d["status"], d.get("via"), d.get("reason") or "-", len(d["text"]), d["url"]))
+    lines = ["# 녹화본", "",
+             "`python3 scripts/eval_run.py --live --record` 로 다시 받는다. 대조에 쓰이는 텍스트만 저장한다.", "",
+             "| 파일 | 상태 | 칸 | 사유 | 길이 | 출처 |", "|---|---|---|---|---|---|"]
+    lines += [f"| `{fn}` | {st} | {via} | {why} | {n} | {url} |" for fn, st, via, why, n, url in rows]
+    with open(os.path.join(directory, "INDEX.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def run(queries, fetcher):
     """→ (rows, per-type tallies). 각 행은 한 주장의 기대와 실제."""
     rows = []
@@ -108,6 +124,8 @@ def main(argv=None):
             if a.record:
                 with open(os.path.join(FIXTURES, _slug(u)), "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False, indent=2)
+    if a.live and a.record:
+        write_index()
     fetcher = replay()
     missing = [u for u in urls if u not in fetcher.store]
     if missing:
