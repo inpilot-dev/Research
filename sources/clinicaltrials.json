@@ -1,0 +1,23 @@
+{
+  "name": "clinicaltrials",
+  "label": "ClinicalTrials.gov",
+  "hosts": ["clinicaltrials.gov", "www.clinicaltrials.gov"],
+  "identifier": {
+    "scheme": "nct",
+    "pattern": "^NCT\\d{8}$",
+    "url_patterns": ["clinicaltrials\\.gov/(?:study|ct2/show)/(NCT\\d{8})"],
+    "canonical_url": "https://clinicaltrials.gov/study/{id}"
+  },
+  "endpoint": "https://clinicaltrials.gov/api/v2/studies/{id}?format=json",
+  "auth": null,
+  "priority": 1,
+  "rate_limit_per_second": 5,
+  "text": {
+    "type": "json",
+    "fields": ["protocolSection.identificationModule.officialTitle",
+               "protocolSection.descriptionModule.briefSummary",
+               "protocolSection.descriptionModule.detailedDescription"],
+    "landing": "protocolSection.identificationModule.nctId"
+  },
+  "note": "연구 페이지가 React SPA 라 직접 fetch 하면 본문이 없다(사유 dynamic, 실측). 헤드리스 브라우저로 그리는 것보다 이 API 가 빠르고 구조화돼 있다. 평가변수·결과 배열은 아직 안 읽는다 — 문자열 목록이 아니라 객체 목록이다."
+}

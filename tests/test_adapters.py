@@ -38,6 +38,14 @@ class Identify(unittest.TestCase):
         self.assertEqual([a["name"] for a, _ in ad.candidates("10.1056/NEJMoa2007764")],
                          ["crossref", "openalex"])
 
+    def test_a_trial_registration_number_reaches_clinicaltrials(self):
+        """연구 페이지가 SPA 라 직접 fetch 로는 본문이 없다 — 헤드리스 대신 이 API 를 쓴다."""
+        for token in ("NCT04280705", "https://clinicaltrials.gov/study/NCT04280705",
+                      "https://clinicaltrials.gov/ct2/show/NCT04280705"):
+            with self.subTest(token=token):
+                a, ident = ad.identify(token)
+                self.assertEqual((a["name"], ident), ("clinicaltrials", "NCT04280705"))
+
     def test_an_unknown_token_has_no_adapter(self):
         self.assertEqual(ad.identify("https://example.com/blog/post"), (None, None))
 
@@ -136,12 +144,14 @@ class Configs(unittest.TestCase):
                 self.assertIn("{id}", a["identifier"]["canonical_url"])
                 self.assertIsNone(a["auth"], "키가 필요한 출처는 사용자가 발급한다 (ADR 0004)")
 
-    def test_there_are_three_adapters_and_they_are_data_not_code(self):
-        self.assertEqual(sorted(a["name"] for a in ad.load()), ["crossref", "openalex", "pubmed"])
+    def test_the_adapters_are_data_not_code(self):
+        self.assertEqual(sorted(a["name"] for a in ad.load()),
+                         ["clinicaltrials", "crossref", "openalex", "pubmed"])
         with open(os.path.join(os.path.dirname(__file__), "..", "scripts", "adapters.py"),
                   encoding="utf-8") as f:
             src = f.read()
-        for leaked in ("eutils", "api.crossref", "api.openalex", "abstract_inverted_index"):
+        for leaked in ("eutils", "api.crossref", "api.openalex", "abstract_inverted_index",
+                       "clinicaltrials.gov", "protocolSection"):
             self.assertNotIn(leaked, src, "어댑터 설정이 코드로 새어 들어왔다 (ADR 0002)")
 
 
