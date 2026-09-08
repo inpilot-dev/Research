@@ -14,9 +14,16 @@
 
 ```bash
 python3 -m unittest discover -s tests   # 네트워크·LLM 없음
-python3 scripts/eval_run.py             # 녹화본 회귀 평가
+python3 scripts/eval_run.py             # 녹화본 회귀 평가 (오프라인)
 claude plugin validate .
+
+python3 evals/demo_end_to_end.py        # 실물 출처로 3유형 전체 파이프라인 (네트워크)
+python3 evals/measure_ladder.py         # 사다리가 어디서 왜 막히는지 분포 (네트워크)
 ```
+
+선택 의존성을 깔지 말지는 `measure_ladder.py` 로 **재보고** 정한다. 짐작으로 깔지 않는다 —
+2026-09-08 측정에서 `dynamic` 이 25건 중 3건이었고, 그중 중요한 하나는 API 어댑터로 해결돼
+playwright 를 깔지 않았다. `curl_cffi` 는 403 다섯 곳 중 셋을 열어 설치했다.
 
 평가 통과율은 **자기보고**다. 사람 검수 절차는 `evals/HUMAN-REVIEW.md` 이고 아직 수행되지 않았다.
 
