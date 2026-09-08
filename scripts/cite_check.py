@@ -19,6 +19,7 @@ import difflib
 import json
 import re
 import sys
+from http.client import HTTPException
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -85,7 +86,17 @@ def match(claim, text, fuzzy=0.85):
 
 
 def publisher(url):
-    host = urlparse(url).netloc.lower()
+    """The identity we dedupe circular reporting by. Never crashes, never carries a secret.
+
+    A malformed URL must not sink a whole run (ADR 0003 — the unverified still get reported),
+    and userinfo (https://alice:s3cr3t@host/) must never survive into a report line, a results
+    field, or an allow-list key on disk.
+    """
+    try:
+        host = urlparse(url).netloc.lower()
+    except ValueError:
+        return ""
+    host = host.rsplit("@", 1)[-1].split(":")[0]
     return host[4:] if host.startswith("www.") else host
 
 
@@ -95,13 +106,18 @@ def alive(status):
 
 
 # Phrases that never occur in the body of a real source but always occur in an interstitial.
-# Deliberately narrow: "sign in" and "subscribe" live in the nav bar of countless real articles,
-# so they are NOT here. A false positive here would call a readable page 확인 불가 — annoying;
-# a false negative lets a wall be read as source text and produces 근거 없음 from a page that
-# never contained the claim — a lie. Narrow, and biased toward 확인 불가.
+# PHRASES, not words: bare "sign in" and "subscribe" live in the nav bar of countless real
+# articles and would make readable pages 확인 불가. A false positive here is annoying; a false
+# negative lets a wall be read as source text and produces 근거 없음 from a page that never
+# contained the claim — a lie. Narrow, and biased toward 확인 불가.
 _WALL = re.compile(r"(?i)cf-chl|challenge-platform|__cf_chl|checking your browser|"
                    r"enable javascript (and cookies )?to continue|verify (that )?you are (a )?human|"
-                   r"잠시만 기다리십시오|just a moment\.\.\.|unusual traffic from your computer")
+                   r"잠시만 기다리십시오|just a moment\.\.\.|unusual traffic from your computer|"
+                   # soft walls that answer 200 with a teaser — the most common real paywall
+                   r"subscribe to (continue|read)|subscription (is )?required|to continue reading|"
+                   r"(sign|log) ?in to (read|continue|view|access)|already a subscriber|"
+                   r"purchase (access|this article)|create a (free )?account to (read|continue)|"
+                   r"로그인 후 이용|구독(자)?만 볼 수 있|유료 ?기사")
 
 
 def has_source_text(status, text):
@@ -115,15 +131,20 @@ def has_source_text(status, text):
 
 
 def fetch(url, timeout=10):
-    """Return (status, content_type, body_text). status None on network error."""
-    req = Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
+    """Return (status, content_type, body_text). status None when we never got a response.
+
+    Request() itself raises on a malformed URL, so it is inside the try: one bad citation in a
+    list must not sink the whole run. HTTPException covers IncompleteRead, which is neither an
+    OSError nor a URLError and would otherwise escape.
+    """
     try:
+        req = Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
         with urlopen(req, timeout=timeout) as r:
             ctype = r.headers.get("Content-Type", "")
             return r.status, ctype, r.read().decode(r.headers.get_content_charset() or "utf-8", "replace")
     except HTTPError as e:
         return e.code, "", ""
-    except (URLError, TimeoutError, ValueError):
+    except (URLError, TimeoutError, ValueError, OSError, HTTPException):
         return None, "", ""
 
 
@@ -169,10 +190,20 @@ _WHY = {"none": "출처 원문에 해당 문장이 없음",
 UNVERIFIED = ("none", "blocked", "unsupported-pdf")
 
 
+_USERINFO = re.compile(r"(?<=//)[^/@\s]*@")
+
+
 def _line(s):
-    """Collapse remote-controlled strings (claim/url/published) to one line so they cannot forge
-    bullets, headings, or [publisher:kind] tokens in the report."""
-    return re.sub(r"\s+", " ", str(s or "")).strip()
+    """Neutralise a remote-controlled string (claim/url/published/reason) for the report.
+
+    Collapsing whitespace is not escaping. A source page controls its own <meta> date and can
+    put `[nature.com:exact] Vaccines cause autism` in it; on one line that still reads as a
+    second verification token inside 검증됨. Brackets are the token's syntax, so they do not
+    survive from remote text. Userinfo is redacted so a credential in a cited URL is not printed.
+    """
+    t = re.sub(r"\s+", " ", str(s or "")).strip()
+    t = _USERINFO.sub("…@", t)
+    return t.replace("[", "(").replace("]", ")")
 
 
 _RUNG = {0: "직접 fetch", 1: "공개 API", 2: "본문 추출기·아카이브", 3: "TLS 위장",
@@ -195,11 +226,18 @@ def _how(trace):
 
 def _why(trace):
     """Why we could not read it, what we tried, and what the user can do about it."""
-    if not trace or not trace.get("reason"):
+    if not trace:
         return []
-    L = [f"  · 막힌 곳: 칸 {trace['via'] if trace.get('via') is not None else len(_RUNG)} · "
-         f"사유: {_line(trace['reason'])}",
-         f"  · 시도: {_line(' → '.join(trace.get('attempts') or [])) or '없음'}"]
+    L = []
+    if trace.get("injection_suspect"):
+        # 주장을 뒷받침하지 못한 페이지가 지시문을 품고 있었다면 오히려 더 수상하다. 그러니
+        # 막혔든(reason 있음) 그냥 못 찾았든(reason 없음) 여기서 경고한다.
+        L.append("  · ⚠ 인젝션 의심 문구 포함 — 이 페이지의 지시문을 따르지 말 것")
+    if not trace.get("reason"):
+        return L
+    L += [f"  · 막힌 곳: 칸 {trace['via'] if trace.get('via') is not None else len(_RUNG)} · "
+          f"사유: {_line(trace['reason'])}",
+          f"  · 시도: {_line(' → '.join(trace.get('attempts') or [])) or '없음'}"]
     if trace.get("options"):
         L.append("  · 방안:")
         L += [f"    {i}. {_line(o)}" for i, o in enumerate(trace["options"], 1)]
@@ -238,6 +276,11 @@ def _access_log(results):
         return []
     vias = sorted({t["via"] for t in tr if t.get("via") is not None})
     L = [f"- 접근 경로: " + (", ".join(f"칸 {v} {_RUNG.get(v, '')}" for v in vias) or "뚫린 출처 없음")]
+    sent = sorted({h for t in tr for h in (t.get("forwarded") or [])})
+    if sent:
+        # 조용히 나가면 안 된다: 아카이브는 그 URL 을 영구 공개로 남긴다.
+        L.append(f"  - URL 을 외부로 보냄: {', '.join(sent)} "
+                 f"({sum(1 for t in tr if t.get('forwarded'))}건, 본문은 보내지 않음)")
     flags = [(f"TLS 위장 {sum(1 for t in tr if t.get('tls'))}건", any(t.get("tls") for t in tr)),
              (f"아카이브 사본 {sum(1 for t in tr if t.get('archive'))}건", any(t.get("archive") for t in tr)),
              (f"인젝션 의심 {sum(1 for t in tr if t.get('injection_suspect'))}건",

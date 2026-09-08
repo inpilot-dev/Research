@@ -8,5 +8,24 @@
   },
   "license": "MIT",
   "repository": "https://github.com/inpilot-dev/Research",
-  "keywords": ["research", "verify", "citation", "fact-check", "grounding"]
+  "keywords": [
+    "research",
+    "verify",
+    "citation",
+    "fact-check",
+    "grounding"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/gate.py\""
+          }
+        ]
+      }
+    ]
+  }
 }

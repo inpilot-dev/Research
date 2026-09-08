@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -32,10 +33,14 @@ from cite_check import UA, alive, extract, has_source_text, publisher  # noqa: E
 # 없었다. bot-wall 로 뭉개면 "사이트가 막았다"는 거짓말이 되므로 코드를 하나 늘렸다.
 REASONS = ("bot-wall", "captcha", "login", "paywall", "robots", "pdf", "dynamic", "budget", "dead")
 
+# 챌린지 표식은 상태 코드와 같은 급의 구조적 신호다 — 본문 낱말보다 먼저 본다.
+_CHALLENGE = re.compile(r"(?i)cf-chl|challenge-platform|__cf_chl|checking your browser|잠시만 기다리십시오")
 _MARK = (
     ("captcha", re.compile(r"(?i)recaptcha|hcaptcha|turnstile|g-recaptcha|\bcaptcha\b|are you a (robot|human)")),
-    ("login", re.compile(r"""(?i)type=["']password["']|\bsign in\b|\blog ?in\b|institutional (sign|log)|"""
-                         r"""\bauthentication required\b|\b로그인\b""")),
+    # 낱말이 아니라 구조·문구로 본다. 맨 'sign in' 은 멀쩡한 기사 내비게이션에도 있고,
+    # 그걸로 login 판정을 내리면 공격자 페이지가 "세션 재사용을 허락해 달라"는 제안을 끌어낸다.
+    ("login", re.compile(r"""(?i)type=["']password["']|(sign|log) ?in to (read|continue|view|access)|"""
+                         r"""institutional (sign|log)[- ]?in|\bauthentication required\b|로그인 후 이용""")),
     ("paywall", re.compile(r"(?i)subscribe to (read|continue)|subscription (is )?required|paywall|"
                            r"purchase (access|this article)|already a subscriber|\b구독\b")),
     ("bot-wall", re.compile(r"(?i)enable javascript|cookies? (are |must be )?(required|enabled)|access denied|"
@@ -43,11 +48,27 @@ _MARK = (
                             r"cf-chl|challenge-platform|잠시만 기다리십시오")),
 )
 # 완전 방어는 불가능하다(15 §6). 목표는 차단이 아니라 표시 — 리더가 이 출처를 요약할 때 알게 한다.
-_INJECT = re.compile(r"(?i)ignore (all |any )?(the )?(previous|prior|above|earlier) (instruction|prompt|direction)"
-                     r"|disregard (all |any )?(the )?(previous|prior|above)"
-                     r"|new instructions\s*:"
+# 제로폭 문자 하나로 정규식을 피할 수 있으므로 먼저 지운다. 한국어 출처도 읽으므로 한국어도 본다.
+_ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u2028\u2029\ufeff\u00ad]")
+_INJECT = re.compile(r"(?i)ignore (all |any )?(the )?(previous|prior|above|earlier)"
+                     r"|disregard (all |any )?(the )?(previous|prior|above|earlier)"
+                     r"|new instructions?\s*:"
+                     r"|you are now (a|an|in|the)\b"
                      r"|system prompt\b"
-                     r"|<\s*\|?\s*im_start")
+                     r"|<\s*\|?\s*im_start"
+                     r"|<!--\s*(assistant|ai|claude|system)\b"
+                     r"|(이전|앞|위)의? ?(지시|지침|명령)(사항)?(을|를)? ?무시"
+                     r"|시스템 프롬프트")
+
+
+def injected(text):
+    """지시문처럼 보이는 문구가 있나. 표시가 목적이지 차단이 목적이 아니다.
+
+    제로폭 문자는 낱말 안에 박아 넣으면(Ig<zwsp>nore) 지워야 잡히고, 낱말 사이에 박아 넣으면
+    (Ignore<zwsp>all) 지우는 순간 붙어버려 안 잡힌다. 그래서 지운 것과 공백으로 바꾼 것을 둘 다 본다.
+    """
+    t = text or ""
+    return bool(_INJECT.search(_ZERO_WIDTH.sub("", t)) or _INJECT.search(_ZERO_WIDTH.sub(" ", t)))
 
 ALLOW_SESSION_PATH = os.environ.get(
     "VERIFY_ALLOW_SESSION", os.path.expanduser("~/.config/verify/allow-session.json"))
@@ -61,13 +82,17 @@ def classify(status, ctype, body):
     if status is None or status in (404, 410):
         return "dead"
     head = body[:200000]
+    if _CHALLENGE.search(head) or status == 203:
+        return "bot-wall"
+    if status == 402:
+        return "paywall"
+    if status == 401:
+        return "login"
+    if status in (403, 429):
+        return "bot-wall"
     for reason, pat in _MARK:
         if pat.search(head):
             return reason
-    if status == 203:
-        return "bot-wall"
-    if status in (401, 402, 403, 429):
-        return "paywall" if status == 402 else "bot-wall"
     if alive(status):
         # 200인데 문장이 없다 = JS로 그리는 껍데기
         return "dynamic"
@@ -91,6 +116,43 @@ def options(reason, host):
     }.get(reason, [save])
 
 
+def rung(*, escalates=False, consent=False, impersonates=False, forwards_url=False):
+    """칸의 성질을 그 칸의 함수에 붙인다.
+
+    게이트를 칸 번호(n == 5)에 걸면 칸 하나만 끼워 넣어도 게이트가 조용히 빠진다 —
+    로그인된 브라우저가 허락 없이 도는 길이 생긴다. 그래서 번호가 아니라 능력으로 건다.
+    """
+    def deco(fn):
+        fn.escalates = escalates          # robots.txt 를 존중해야 하는 칸인가
+        fn.needs_consent = consent        # 사용자의 로그인 세션을 쓰는 칸인가
+        fn.impersonates = impersonates    # TLS 위장을 쓰는 칸인가
+        fn.forwards_url = forwards_url    # URL 을 제3자에게 넘기는 칸인가
+        return fn
+    return deco
+
+
+_SECRETISH = re.compile(r"(?i)(^|&)[^=&]*(token|key|secret|signature|sig|password|passwd|auth|session)=")
+_PRIVATE = re.compile(r"^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)")
+
+
+def forwardable(url):
+    """이 URL 을 외부 추출기·아카이브에 넘겨도 되나.
+
+    넘기면 그 URL 은 제3자의 기록으로 남는다 (아카이브는 영구 공개다). 서명된 링크·사내 주소·
+    자격증명이 박힌 URL 은 넘기지 않는다 — 읽으려다 사용자의 비밀 링크를 공개하면 안 된다.
+    """
+    try:
+        u = urlparse(url)
+    except ValueError:
+        return False
+    if "@" in u.netloc:
+        return False
+    host = u.netloc.split(":")[0].lower()
+    if not host or "." not in host or _PRIVATE.match(host) or host.endswith((".local", ".internal", ".lan")):
+        return False
+    return not _SECRETISH.search(u.query or "")
+
+
 def _readable(status, ctype, body):
     """대조에 쓸 수 있는 진짜 본문인가 — 코어와 같은 기준을 쓴다."""
     if not alive(status) or "pdf" in (ctype or "").lower():
@@ -100,8 +162,9 @@ def _readable(status, ctype, body):
 
 
 def _get(url, timeout, ua=UA, headers=None):
-    req = Request(url, headers={"User-Agent": ua, "Accept": "text/html,*/*", **(headers or {})})
     try:
+        # Request() raises on a malformed URL — inside the try, or one bad citation kills the run.
+        req = Request(url, headers={"User-Agent": ua, "Accept": "text/html,*/*", **(headers or {})})
         with urlopen(req, timeout=timeout) as r:
             body = r.read().decode(r.headers.get_content_charset() or "utf-8", "replace")
             return r.status, r.headers.get("Content-Type", ""), body
@@ -110,8 +173,8 @@ def _get(url, timeout, ua=UA, headers=None):
             return e.code, e.headers.get("Content-Type", "") if e.headers else "", e.read().decode("utf-8", "replace")
         except Exception:
             return e.code, "", ""
-    except (URLError, TimeoutError, ValueError, OSError):
-        return None, "", ""
+    except (URLError, TimeoutError, ValueError, OSError, HTTPException):
+        return None, "", ""   # HTTPException: IncompleteRead is neither OSError nor URLError
 
 
 # ── 칸 1: 공개 API 어댑터 ────────────────────────────────────────────────────
@@ -126,6 +189,22 @@ def _pubmed(url, timeout):
 
 
 ADAPTERS = {"pubmed.ncbi.nlm.nih.gov": _pubmed, "www.ncbi.nlm.nih.gov": _pubmed}
+
+# 칸 5가 사용자의 브라우저에서 돌리는 스크립트 — 전문이 여기 있다. 여는 것·기다리는 것·읽는 것·
+# 닫는 것뿐이다. 사람이 하는 순서와 같다: 탭에서 열고, 화면이 자리잡길 잠깐 기다리고, 읽는다.
+# 기다리는 것은 로딩을 기다리는 것이지 CAPTCHA 를 푸는 것이 아니다 — 그건 하지 않는다.
+# 상태를 200으로 박아두면 403 챌린지 페이지가 200짜리 본문으로 둔갑한다(NEJM 실측). 그래서
+# 아직 대기 화면이면 그때만 브라우저에 진짜 상태를 물어본다.
+# 이 상수에 등장할 수 있는 이름은 테스트가 허용 목록으로 못박는다 — aside 는 자격증명·메일·
+# 쿠키·CAPTCHA 전역도 노출하지만 그 이름들은 여기 있을 수 없다 (ADR 0004).
+ASIDE_READ_JS = """const W = /cf-chl|challenge-platform|__cf_chl|checking your browser/i;
+const t = await openTab(%(u)s);
+let h = await page.content();
+for (let i = 0; i < 3 && W.test(h); i++) { await sleep(2000); h = await page.content(); }
+let s = 200;
+if (W.test(h)) { try { s = (await fetch(%(u)s)).status; } catch (e) { s = 403; } }
+console.log(JSON.stringify({s: s, h: h}));
+await closeTab(t);"""
 
 
 class AccessLadder:
@@ -145,29 +224,32 @@ class AccessLadder:
     # ── 사다리 ───────────────────────────────────────────────────────────
     def __call__(self, url, timeout=10):
         t0, last = self.clock(), (None, "", "")
-        tr = {"via": None, "attempts": [], "reason": None, "options": [],
+        tr = {"via": None, "attempts": [], "reason": None, "options": [], "forwarded": [],
               "injection_suspect": False, "archive": False, "tls": False}
         self.trace[url] = tr
         for n, fn in self._rungs:
-            if self.clock() - t0 > self.budget:
+            left = self.budget - (self.clock() - t0)
+            if left <= 0:
                 return self._stop(url, tr, "budget", last)
-            if n >= 3 and not self._robots_check(url, timeout):
+            if getattr(fn, "escalates", False) and not self._robots_ok_guarded(url, timeout):
                 tr["attempts"].append(f"{n}:robots-disallow")
                 return self._stop(url, tr, "robots", last)
-            if n == 5 and not self._session_ok(url, tr):
+            if getattr(fn, "needs_consent", False) and not self._session_ok(url, tr):
                 continue
             try:
-                got = fn(url, timeout, tr)
+                got = fn(url, min(timeout, left), tr, left)
             except Exception as e:                      # 한 칸이 터져도 사다리는 계속 오른다
                 tr["attempts"].append(f"{n}:error {type(e).__name__}")
                 continue
             if got is None:
                 continue
             status, ctype, body = got
+            # 이긴 칸의 본문만 보면, 아래 칸에서 이미 읽은 지시문을 놓친다.
+            tr["injection_suspect"] = tr["injection_suspect"] or injected(body)
             if _readable(status, ctype, body):
                 tr["attempts"].append(f"{n}:ok")
                 tr["via"] = n
-                tr["injection_suspect"] = bool(_INJECT.search(body or ""))
+                tr["tls"] = getattr(fn, "impersonates", False)   # 진 칸의 수단을 성공에 붙이지 않는다
                 return got
             last = got
             tr["attempts"].append(f"{n}:{status if status is not None else 'net-error'}")
@@ -185,20 +267,25 @@ class AccessLadder:
         return last
 
     # ── 각 칸 ────────────────────────────────────────────────────────────
-    def _direct(self, url, timeout, tr):
+    def _direct(self, url, timeout, tr, left):
         return _get(url, timeout)
 
-    def _adapter(self, url, timeout, tr):
+    def _adapter(self, url, timeout, tr, left):
         fn = ADAPTERS.get(urlparse(url).netloc.lower())
         if not fn:
             tr["attempts"].append("1:어댑터 없음")
             return None
         return fn(url, timeout)
 
-    def _extractor(self, url, timeout, tr):
+    @rung(forwards_url=True)
+    def _extractor(self, url, timeout, tr, left):
         if not self.extractor:
             tr["attempts"].append("2:꺼짐")
             return None
+        if not forwardable(url):
+            tr["attempts"].append("2:건너뜀(사적·서명된 URL 은 제3자에 넘기지 않음)")
+            return None
+        tr["forwarded"] = ["r.jina.ai", "web.archive.org"]   # 감사 로그에 남긴다
         key = os.environ.get("JINA_API_KEY")
         if key:
             got = _get("https://r.jina.ai/" + url, timeout, headers={"Authorization": f"Bearer {key}"})
@@ -214,7 +301,8 @@ class AccessLadder:
         tr["attempts"].append(f"2:archive {got[0]}")
         return None
 
-    def _impersonate(self, url, timeout, tr):
+    @rung(escalates=True, impersonates=True)
+    def _impersonate(self, url, timeout, tr, left):
         if not self.tls:
             tr["attempts"].append("3:꺼짐")
             return None
@@ -224,10 +312,10 @@ class AccessLadder:
             tr["attempts"].append("3:건너뜀(curl_cffi 미설치)")
             return None
         r = cffi.get(url, impersonate="chrome", timeout=timeout)
-        tr["tls"] = True
         return r.status_code, r.headers.get("Content-Type", ""), r.text
 
-    def _headless(self, url, timeout, tr):
+    @rung(escalates=True)
+    def _headless(self, url, timeout, tr, left):
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -237,12 +325,16 @@ class AccessLadder:
             b = p.chromium.launch()
             try:
                 pg = b.new_page()
-                pg.goto(url, timeout=timeout * 1000)
-                return 200, "text/html", pg.content()
+                # 상태를 200으로 박으면 렌더된 404·403 페이지가 살아있는 본문이 된다 — 칸 5에서
+                # 실제로 났던 버그다. 응답이 알려주는 상태를 그대로 쓴다.
+                resp = pg.goto(url, timeout=int(min(timeout, left) * 1000))
+                ctype = (resp.header_value("content-type") or "text/html") if resp else "text/html"
+                return (resp.status if resp else None), ctype, pg.content()
             finally:
                 b.close()
 
-    def _browser_session(self, url, timeout, tr):
+    @rung(escalates=True, consent=True)
+    def _browser_session(self, url, timeout, tr, left):
         """칸 5 — 사용자가 이미 로그인한 브라우저로 '읽기만' 한다.
 
         여는 것·읽는 것 외에는 아무것도 하지 않는다. aside 는 자격증명 접근(applePasswords)과
@@ -252,19 +344,9 @@ class AccessLadder:
         if not exe:
             tr["attempts"].append("5:건너뜀(aside 미설치)")
             return None
-        # 사람이 하는 것과 같은 순서: 탭에서 열고, 화면이 자리잡을 때까지 잠깐 기다리고, 읽는다.
-        # 상태 코드를 200으로 박아두면 403 챌린지 페이지가 200짜리 본문으로 둔갑한다(NEJM 실측).
-        # 아직도 대기 화면이면 그때만 브라우저 fetch 로 진짜 상태를 물어본다.
-        # 기다리는 것은 로딩을 기다리는 것이지 CAPTCHA 를 푸는 것이 아니다 — 그건 하지 않는다.
-        js = ("const W = /cf-chl|challenge-platform|__cf_chl|checking your browser|잠시만 기다리십시오/i;\n"
-              "const t = await openTab(%(u)s);\n"
-              "let h = await page.content();\n"
-              "for (let i = 0; i < 3 && W.test(h); i++) { await sleep(2000); h = await page.content(); }\n"
-              "let s = 200;\n"
-              "if (W.test(h)) { try { s = (await fetch(%(u)s)).status; } catch (e) { s = 403; } }\n"
-              "console.log(JSON.stringify({s: s, h: h}));\n"
-              "await closeTab(t);" % {"u": json.dumps(url)})
-        p = subprocess.run([exe, "repl", js], capture_output=True, text=True, timeout=max(timeout, 90))
+        js = ASIDE_READ_JS % {"u": json.dumps(url)}
+        p = subprocess.run([exe, "repl", js], capture_output=True, text=True,
+                           timeout=max(5.0, min(left, 60.0)))
         for line in p.stdout.splitlines():
             if line.startswith('{"s"'):
                 d = json.loads(line)
@@ -286,6 +368,13 @@ class AccessLadder:
             return True
         tr["attempts"].append("5:세션 미허용")           # 묻지 못했으면 시도하지 않는다
         return False
+
+    def _robots_ok_guarded(self, url, timeout):
+        """robots 조회가 터져도 사다리 전체를 죽이지 않는다 — 못 읽으면 허용으로 본다."""
+        try:
+            return self._robots_check(url, timeout)
+        except Exception:
+            return True
 
     def _robots_ok(self, url, timeout):
         from urllib.robotparser import RobotFileParser

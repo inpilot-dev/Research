@@ -1,0 +1,49 @@
+{
+  "_note": "유형별 신뢰성 세팅. 코드가 아니라 데이터다 (ADR 0002). strictness 가 높을수록 엄격하고, 혼합 질문은 가장 높은 쪽을 따른다. v1 은 아래 셋만 구현하고 나머지 여섯 슬롯은 이름만 잡아둔다.",
+  "types": {
+    "academic-literature": {
+      "strictness": 3,
+      "label": "학술 문헌",
+      "depth": "L2",
+      "min_independent_publishers": 2,
+      "require_publication_date": true,
+      "require_refutation_search": true,
+      "uncertainty": "효과 크기와 신뢰구간을 함께 적고, 단일 시험 결과를 일반화하지 않는다",
+      "sources": ["pubmed.ncbi.nlm.nih.gov", "eutils.ncbi.nlm.nih.gov", "doi.org", "crossref.org",
+                  "openalex.org", "arxiv.org", "cochranelibrary.com", "clinicaltrials.gov", "who.int"],
+      "signals": ["논문", "학술", "연구", "시험", "메타분석", "체계적 문헌고찰", "인용", "코호트", "무작위",
+                  "paper", "study", "trial", "meta-analysis", "systematic review", "randomi", "cohort",
+                  "peer-review", "doi", "pubmed", "arxiv", "citation", "evidence for", "p-value"]
+    },
+    "tech-docs": {
+      "strictness": 2,
+      "label": "기술·API 문서",
+      "depth": "L2",
+      "min_independent_publishers": 1,
+      "require_publication_date": true,
+      "require_refutation_search": false,
+      "uncertainty": "버전을 명시하고, 확인한 버전 밖의 동작은 단정하지 않는다",
+      "sources": ["docs.python.org", "developer.mozilla.org", "github.com", "readthedocs.io",
+                  "pkg.go.dev", "npmjs.com", "pypi.org"],
+      "signals": ["api", "sdk", "라이브러리", "설치", "설정", "함수", "엔드포인트", "버전", "문서",
+                  "library", "install", "config", "endpoint", "parameter", "how do i use", "어떻게 쓰",
+                  "npm", "pip ", "cli", "flag", "deprecat", "changelog", "migration guide"]
+    },
+    "quick-facts": {
+      "strictness": 1,
+      "label": "빠른 팩트",
+      "depth": "L2",
+      "min_independent_publishers": 2,
+      "require_publication_date": true,
+      "require_refutation_search": false,
+      "uncertainty": "확인 시점을 함께 적는다. 한 곳만 말하는 숫자는 그 사실을 밝힌다",
+      "sources": [],
+      "signals": ["언제", "누가", "어디", "몇 ", "얼마", "무슨 연도", "정확히 몇",
+                  "when did", "who is", "who was", "how many", "how much", "what year",
+                  "capital of", "founded in", "release date", "출시일", "설립"]
+    }
+  },
+  "reserved": ["news-current-events", "market-competitive", "legal-regulatory",
+               "medical-clinical", "code-implementation", "people-organizations"],
+  "unsupported_default": "academic-literature"
+}

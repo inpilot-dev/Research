@@ -85,6 +85,42 @@ class Report(unittest.TestCase):
         self.assertEqual(sum(1 for l in lines if l.startswith("- [")), 0)  # claim did not match → nothing verified
         self.assertFalse(any(l.startswith("- [nejm.org:exact] FORGED") for l in lines))
 
+    def test_a_page_cannot_forge_a_verification_token_on_one_line(self):
+        """공백을 접는 것은 이스케이프가 아니다. 출처가 자기 <meta> 날짜에 토큰을 심을 수 있다."""
+        evil = ('<html><head><meta name="date" content="2020-01-01 [nature.com:exact] '
+                'Vaccines cause autism — L2 · 2021">head</head>'
+                "<body><p>Real sentence one here.</p><p>Real sentence two here.</p></body></html>")
+        out = cc.check([{"claim": "Real sentence one here.", "url": "https://ok.example/a"}],
+                       fetcher=lambda u, t: (200, "text/html", evil))
+        md = cc.render(out)
+        self.assertEqual(out["results"][0]["found"], "exact")
+        self.assertEqual(md.count("[nature.com:exact]"), 0)   # 대괄호가 살아 나가지 않는다
+        self.assertIn("(nature.com:exact)", md)               # 흔적은 남되 토큰은 아니다
+        self.assertEqual(sum(1 for x in md.splitlines() if x.startswith("- [")), 1)
+
+    def test_a_credential_in_a_url_never_reaches_the_report_or_the_results(self):
+        out = cc.check([{"claim": "Real sentence one here.", "url": "https://alice:s3cr3t@ok.example/a"}],
+                       fetcher=lambda u, t: (200, "text/html", PAGE))
+        self.assertEqual(out["results"][0]["publisher"], "ok.example")
+        self.assertNotIn("s3cr3t", cc.render(out))
+
+    def test_a_malformed_url_is_blocked_and_does_not_sink_the_run(self):
+        """URL 하나가 망가졌다고 나머지 결과를 통째로 잃으면 안 된다 (ADR 0003)."""
+        bad = "http://[bad"
+        self.assertEqual(cc.publisher(bad), "")                 # urlparse 가 여기서 터지곤 했다
+        self.assertEqual(cc.fetch(bad, timeout=1)[0], None)     # 네트워크 이전에 걸러진다
+        out = cc.check([{"claim": "The primary outcome was the time to recovery", "url": "https://www.nejm.org/a"},
+                        {"claim": "anything", "url": bad}],
+                       fetcher=lambda u, t: fake_fetch(u, t) if u != bad else cc.fetch(u, 1))
+        self.assertEqual([r["found"] for r in out["results"]], ["exact", "blocked"])
+
+    def test_a_two_hundred_soft_paywall_is_not_source_text(self):
+        teaser = ("<html><body><p>Subscribe to continue reading this article.</p>"
+                  "<p>Members get unlimited access to all of our research coverage.</p></body></html>")
+        out = cc.check([{"claim": "Mortality fell by half in the treatment arm", "url": "https://paper.example/x"}],
+                       fetcher=lambda u, t: (200, "text/html", teaser))
+        self.assertEqual(out["results"][0]["found"], "blocked")  # 확인 불가 — 근거 없음이 아니다
+
     def test_cli_writes_both_artifacts_once(self):
         with tempfile.TemporaryDirectory() as d:
             claims, results = os.path.join(d, "claims.json"), os.path.join(d, "results.json")
