@@ -46,9 +46,23 @@ def candidates(token, adapters=None):
 
 
 def _match(adapter, token):
+    """이 어댑터가 이 토큰을 맡을 수 있나 → 식별자, 아니면 None.
+
+    URL 이면 **호스트가 맞을 때만** 본문 패턴을 적용한다. 패턴만 보고 아무 데서나 찾으면
+    `?term=32445440` 이 붙은 남의 URL 이 PubMed 논문으로 둔갑해, 인용하지도 않은 출처를 읽고
+    "근거 없음" 을 찍게 된다.
+    """
     ident, t = adapter["identifier"], token.strip()
     if re.fullmatch(ident["pattern"], t):
         return t
+    if "://" in t:
+        try:
+            host = urlparse(t).netloc.rsplit("@", 1)[-1].split(":")[0].lower()
+        except ValueError:
+            return None
+        allowed = {h.lower().removeprefix("www.") for h in adapter.get("hosts", [])}
+        if host.removeprefix("www.") not in allowed:
+            return None
     for pat in ident.get("url_patterns", []):
         m = re.search(pat, t)
         if m:
@@ -77,14 +91,21 @@ def _dig(obj, path):
 
 
 def _uninvert(index):
-    """OpenAlex 초록은 낱말→위치 역색인으로 온다. 원문 순서로 되돌린다."""
+    """OpenAlex 초록은 낱말→위치 역색인으로 온다. 원문 순서로 되돌린다.
+
+    한 자리에 두 낱말이 오거나 위치가 음수인 응답도 온다. 덮어쓰면 낱말이 사라져 문장의 뜻이
+    바뀌므로 같은 자리는 모아 두고, 음수는 버린다 — 대조할 원문을 우리가 왜곡하면 안 된다.
+    """
     if not isinstance(index, dict):
         return ""
     slots = {}
     for word, positions in index.items():
+        if not isinstance(word, str) or not isinstance(positions, (list, tuple)):
+            continue
         for p in positions:
-            slots[p] = word
-    return " ".join(slots[k] for k in sorted(slots))
+            if isinstance(p, int) and p >= 0:
+                slots.setdefault(p, []).append(word)
+    return " ".join(w for k in sorted(slots) for w in slots[k])
 
 
 def text_of(adapter, body):
@@ -97,7 +118,7 @@ def text_of(adapter, body):
     except ValueError:
         return ""
     parts = [_dig(doc, f) for f in spec.get("fields", [])]
-    parts = [" ".join(p) if isinstance(p, list) else p for p in parts]
+    parts = [" ".join(x for x in p if isinstance(x, str)) if isinstance(p, list) else p for p in parts]
     if spec.get("inverted_index"):
         parts.append(_uninvert(_dig(doc, spec["inverted_index"])))
     return re.sub(r"<[^>]+>", " ", " ".join(p for p in parts if isinstance(p, str) and p)).strip()
@@ -132,7 +153,11 @@ class Registry:
             if status is None or not (200 <= status < 400):
                 last = (status, "", "")     # 어댑터 실패 → 다음 어댑터, 끝내 없으면 확인 불가
                 continue
-            text = text_of(adapter, body)
+            try:
+                text = text_of(adapter, body)
+            except Exception:      # 한 어댑터의 예상 밖 응답이 인용 목록 전체를 죽이지 않는다
+                last = (502, "", "")
+                continue
             # 제목 한 줄로는 문장을 대조할 수 없다. "원문을 읽었다"의 기준은 코어와 같은 것 하나뿐이다 —
             # 여기서 느슨하게 통과시키면 제목만 보고 "근거 없음"을 찍게 된다.
             if has_source_text(status, text):

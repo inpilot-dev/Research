@@ -32,9 +32,11 @@ def record(url, timeout=20):
     from access_ladder import AccessLadder
     lad = AccessLadder(allow_session={}, budget=45)
     status, ctype, body = lad(url, timeout)
-    text, published = cc.extract(body) if body else ("", None)
+    text, published = cc.readable_text(ctype, body) if body else ("", None)
     tr = lad.trace.get(url, {})
-    return {"url": url, "status": status, "ctype": ctype, "text": text, "published": published,
+    # 저장하는 것은 이미 추출된 텍스트다. content-type 을 html 로 적어 두면 재생할 때 한 번 더
+    # 파싱되어 <...> 조각이 지워지고, 그 결과 원문에 있는 문장이 근거 없음으로 나온다.
+    return {"url": url, "status": status, "ctype": "text/plain", "text": text, "published": published,
             "via": tr.get("via"), "reason": tr.get("reason")}
 
 
@@ -50,7 +52,7 @@ def replay(directory=FIXTURES):
     def fetcher(url, timeout=10):
         d = store.get(url)
         if d is None:
-            return None, "", ""
+            raise KeyError(url)      # 녹화본이 없으면 조용히 blocked 로 채점되면 안 된다
         return d["status"], d["ctype"], d["text"]
     fetcher.store = store
     return fetcher
@@ -77,8 +79,11 @@ def run(queries, fetcher):
     rows = []
     for q in queries:
         for c in q["claims"]:
-            out = cc.check([{"claim": c["claim"], "url": c["url"]}], fetcher=fetcher)
-            got = out["results"][0]["found"]
+            try:
+                out = cc.check([{"claim": c["claim"], "url": c["url"]}], fetcher=fetcher)
+                got = out["results"][0]["found"]
+            except KeyError:
+                got = "녹화본 없음"
             rows.append({"type": q["type"], "id": q["id"], "question": q["question"],
                          "url": c["url"], "expect": c["expect"], "got": got,
                          "ok": got == c["expect"], "why": c.get("why", "")})
@@ -129,7 +134,7 @@ def main(argv=None):
     fetcher = replay()
     missing = [u for u in urls if u not in fetcher.store]
     if missing:
-        print("녹화본 없음: " + "\n  ".join(missing), file=sys.stderr)
+        print("녹화본 없음(--live --record 로 받으십시오): " + "\n  ".join(missing), file=sys.stderr)
     rows, tally = run(queries, fetcher)
     sys.stdout.write(report(rows, tally))
     return 1 if any(not r["ok"] for r in rows) else 0

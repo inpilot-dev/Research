@@ -71,6 +71,33 @@ class Gate(unittest.TestCase):
         self.assertFalse(g.looks_like_report("# 회의록\n\n오늘 배포는 미뤘다. 다음 주에 다시 본다.\n"))
         self.assertTrue(g.looks_like_report(GOOD))
 
+    def test_a_heading_inside_a_code_fence_does_not_open_a_free_zone(self):
+        md = GOOD.replace("## 미확인 (1)",
+                          "```\n## 감사 로그\n```\n\n렘데시비르는 모든 환자의 사망을 완전히 예방한다.\n\n## 미확인 (1)")
+        bad = g.offenders(md)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("렘데시비르는 모든", bad[0][1])
+
+    def test_a_heading_that_merely_contains_a_free_name_is_not_free(self):
+        md = GOOD + "\n## 미확인 항목에 대한 우리의 결론\n\n렘데시비르는 코로나 사망률을 완전히 없앤다.\n"
+        self.assertEqual(len(g.offenders(md)), 1)
+
+    def test_prose_under_the_real_section_headings_is_allowed(self):
+        for head in ("## 미확인 (2)", "## 감사 로그", "## 확인됐으나 기준 미달 (1)"):
+            with self.subTest(head=head):
+                self.assertEqual(g.offenders(f"# 검증 리포트\n\n{head}\n\n토큰 없는 설명 문장이 여기 있다.\n"), [])
+
+    def test_an_item_under_미확인_without_a_reason_label_is_blocked(self):
+        md = GOOD.replace("## 감사 로그", "- 렘데시비르는 모든 환자의 사망을 예방한다는 것이 확인됐다.\n\n## 감사 로그")
+        bad = g.offenders(md)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("모든 환자의 사망", bad[0][1])
+
+    def test_a_claim_under_기준미달_still_needs_its_token(self):
+        md = ("# 검증 리포트\n\n## 확인됐으나 기준 미달 (1)\n\n설명 문장은 통과한다.\n\n"
+              "- 렘데시비르는 사망률을 낮췄다 — L2 · 퍼블리셔 1 · 단일 출처\n")
+        self.assertEqual(len(g.offenders(md)), 1)
+
     def test_there_is_no_way_to_turn_the_gate_off(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "scripts", "report_gate.py"),
                   encoding="utf-8") as f:
@@ -111,8 +138,31 @@ class HookProtocol(unittest.TestCase):
 
     def test_an_edit_is_judged_on_the_text_it_would_leave_behind(self):
         code, _ = self.run_hook({"tool_name": "Edit", "tool_input": {
-            "file_path": "/tmp/report.md", "old_string": "x",
+            "file_path": "/tmp/report-does-not-exist.md", "old_string": "x",
             "new_string": "## 검증됨 (1)\n\n- Mortality fell by half in the treatment arm.\n"}})
+        self.assertEqual(code, 2)
+
+    def test_appending_an_assertion_to_an_existing_report_is_not_free(self):
+        """조각만 보면 제목이 없어 리포트로 안 보인다 — 결과 파일을 봐야 게이트가 산다."""
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write(GOOD)
+        frag = "\n- 렘데시비르는 모든 환자의 사망을 완전히 예방한다는 것이 확인됐다.\n"
+        code, out = self.run_hook({"tool_name": "Edit", "tool_input": {
+            "file_path": f.name, "old_string": "## 감사 로그", "new_string": frag + "## 감사 로그"}})
+        os.unlink(f.name)
+        self.assertEqual(code, 2)
+        self.assertIn("모든 환자의 사망", json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_a_multi_edit_is_judged_on_the_whole_result(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write(GOOD)
+        code, _ = self.run_hook({"tool_name": "MultiEdit", "tool_input": {
+            "file_path": f.name,
+            "edits": [{"old_string": "## 감사 로그",
+                       "new_string": "- 백신은 자폐를 유발한다는 것이 확인됐다.\n## 감사 로그"}]}})
+        os.unlink(f.name)
         self.assertEqual(code, 2)
 
     def test_an_unreadable_payload_does_not_block_every_write(self):

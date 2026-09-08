@@ -302,6 +302,44 @@ class InjectionMarking(unittest.TestCase):
         self.assertIn("⚠ 인젝션 의심", cc.render(out))
 
 
+class ArchiveCopies(unittest.TestCase):
+    """아카이브 사본은 지금의 그 출처가 아니다."""
+
+    def ladder_serving_archive(self, page):
+        lad, _ = ladder([(0, DEAD), (2, (200, "text/html", page))])
+        return lad
+
+    def test_a_sentence_missing_from_an_archive_copy_is_not_근거없음(self):
+        lad = self.ladder_serving_archive(REAL)
+        lad.trace  # noqa: B018
+        out = cc.check([{"claim": "Nothing like this appears in the archived page",
+                         "url": "https://gone.example/x"}], fetcher=lad)
+        lad.trace["https://gone.example/x"]["archive"] = True
+        out = cc.check([{"claim": "Nothing like this appears in the archived page",
+                         "url": "https://gone.example/x"}], fetcher=_fixed(lad))
+        self.assertEqual(out["results"][0]["found"], "blocked")   # 확인 불가 — 살아있는 원문엔 있을 수 있다
+        md = cc.render(out)
+        self.assertIn("archive-only", md)
+        self.assertIn("아카이브 사본만", md)
+
+    def test_a_sentence_found_in_an_archive_copy_still_counts_but_is_marked(self):
+        lad = self.ladder_serving_archive(REAL)
+        cc.check([{"claim": "x", "url": "https://gone.example/x"}], fetcher=lad)
+        lad.trace["https://gone.example/x"]["archive"] = True
+        out = cc.check([{"claim": "The primary outcome was the time to recovery.",
+                         "url": "https://gone.example/x"}], fetcher=_fixed(lad))
+        self.assertEqual(out["results"][0]["found"], "exact")
+        self.assertIn("아카이브 사본", cc.render(out))
+
+
+def _fixed(lad):
+    """trace 를 그대로 둔 채 같은 응답을 다시 주는 fetcher — 아카이브 표시를 유지하려고."""
+    def f(url, timeout=10):
+        return 200, "text/html", REAL
+    f.trace = lad.trace
+    return f
+
+
 class BudgetAndStatus(unittest.TestCase):
     def source(self, start, end):
         with open(os.path.join(os.path.dirname(__file__), "..", "scripts", "access_ladder.py"),

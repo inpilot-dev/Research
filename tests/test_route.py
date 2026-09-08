@@ -23,6 +23,9 @@ TECH = [
     "이 함수 파라미터가 어떻게 바뀌었는지 changelog 봐줘",
     "Is this API flag deprecated?",
     "migration guide 대로 하면 되는 거 맞아?",
+    "이 api를 어떻게 쓰나",
+    "Rust tokio 크레이트에서 spawn 은 무엇을 반환하나?",
+    "Kubernetes CRD 를 만드는 절차를 알려줘",
 ]
 QUICK = [
     "이 회사 설립 연도가 언제야",

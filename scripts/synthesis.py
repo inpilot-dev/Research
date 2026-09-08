@@ -97,17 +97,22 @@ def synthesize(question, route, claims, meta):
     return "\n".join(L) + "\n"
 
 
-_CLAIM_LINE = re.compile(r"^- \[[^\]]+:(?:exact|fuzzy[^\]]*)\] .+ — (L2|미검증) · 퍼블리셔 \d+ · \S+")
+# 필드는 줄 **끝**에 붙는다. 앞쪽 어디서나 찾으면 주장 문장에 "· 퍼블리셔 9 ·" 를 심어
+# 검사기를 속일 수 있다 — 출처 페이지가 주장 문장을 통제한다는 것을 잊으면 안 된다.
+_CLAIM_LINE = re.compile(r"^- \[[^\]]+:(?:exact|fuzzy[^\]]*)\] .+ — L2 · 퍼블리셔 \d+ · [^·]+ · \S+"
+                         r"(?: · [^·]+)*$")
+_TAIL = re.compile(r"— L2 · 퍼블리셔 (\d+) · ")
 
 
 _FLOOR = re.compile(r"독립 퍼블리셔 최소 기준 (\d+)")
-_PUBS = re.compile(r"· 퍼블리셔 (\d+) ·")
 
 
 def problems(md):
     """종합문이 규칙을 어긴 자리들. 빈 리스트면 내보내도 된다."""
     bad, section = [], ""
-    floor = int(m.group(1)) if (m := _FLOOR.search(md)) else 1
+    # 기준은 감사 로그에서만 읽는다. 문서 전체에서 찾으면 주장 문장에 심어 둔 숫자가 먼저 걸린다.
+    audit = md.split("## 감사 로그", 1)[1] if "## 감사 로그" in md else ""
+    floor = int(m.group(1)) if (m := _FLOOR.search(audit)) else 1
     for i, line in enumerate(md.splitlines(), 1):
         head = re.match(r"^\s*#{1,6}\s*(.+?)\s*$", line)
         if head:
@@ -117,7 +122,7 @@ def problems(md):
             continue
         if "확인" in section and "미확인" not in section and not _CLAIM_LINE.match(line):
             bad.append((i, "네 필드(주장·깊이·퍼블리셔 수·상충)를 갖추지 않은 주장", line.strip()))
-        if section.startswith("확인된 것") and (p := _PUBS.search(line)) and int(p.group(1)) < floor:
+        if section.startswith("확인된 것") and (p := _TAIL.search(line)) and int(p.group(1)) < floor:
             bad.append((i, f"이 유형은 독립 퍼블리셔 {floor}곳을 요구하는데 확인된 것에 들어 있다", line.strip()))
         if "미확인" in section and not any(line.startswith(f"- {k}:") for k in _KO.values()):
             bad.append((i, "미확인 항목이 사유 없이 단정문으로 적혔다", line.strip()))

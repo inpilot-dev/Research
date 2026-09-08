@@ -7,10 +7,9 @@
   ],
   "identifier": {
     "scheme": "pmid",
-    "pattern": "^\\d{1,9}$",
+    "pattern": "^\\d{5,9}$",
     "url_patterns": [
-      "pubmed\\.ncbi\\.nlm\\.nih\\.gov/(\\d+)",
-      "[?&]term=(\\d+)"
+      "pubmed\\.ncbi\\.nlm\\.nih\\.gov/(\\d+)"
     ],
     "canonical_url": "https://pubmed.ncbi.nlm.nih.gov/{id}/"
   },
@@ -20,6 +19,6 @@
   "text": {
     "type": "plain"
   },
-  "note": "HTML 페이지는 봇 벽이 203을 돌려준다(실측). 키 없이 3 req/s 가 NCBI 공표 한도.",
+  "note": "HTML 페이지는 봇 벽이 203을 돌려준다(실측). 키 없이 3 req/s 가 NCBI 공표 한도. 맨 숫자는 5자리 이상만 PMID 로 본다 — '2020' 같은 연도가 1970년대 논문으로 해석되면 안 된다.",
   "priority": 1
 }

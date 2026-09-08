@@ -27,7 +27,7 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adapters  # noqa: E402
-from cite_check import UA, alive, extract, has_source_text, publisher  # noqa: E402
+from cite_check import UA, alive, has_source_text, publisher, readable_text  # noqa: E402
 
 # ── 사유 코드 ────────────────────────────────────────────────────────────────
 # 기획(17 §4)의 8종 + dead. 죽은 링크는 인용 부패의 가장 흔한 형태인데 8종에 자리가
@@ -158,7 +158,7 @@ def _readable(status, ctype, body):
     """대조에 쓸 수 있는 진짜 본문인가 — 코어와 같은 기준을 쓴다."""
     if not alive(status) or "pdf" in (ctype or "").lower():
         return False
-    text, _ = extract(body or "")
+    text, _ = readable_text(ctype, body)
     return has_source_text(status, text)
 
 

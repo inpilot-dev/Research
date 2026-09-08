@@ -14,9 +14,28 @@ from report_gate import explain, looks_like_report, offenders  # noqa: E402
 
 
 def written_text(payload):
-    """이 도구 호출이 파일에 남기려는 텍스트."""
+    """이 도구 호출이 끝난 뒤 **파일에 남을** 텍스트.
+
+    Edit 의 조각만 보면 게이트가 통째로 새어 나간다 — 제목 없는 조각에는 `## 검증됨` 이 없으니
+    리포트로 보이지 않고, 검증된 리포트에 단정문을 덧붙이는 일이 공짜가 된다. 그래서 대상 파일을
+    읽어 편집을 적용한 결과를 판정한다.
+    """
     ti = payload.get("tool_input") or {}
-    return ti.get("content") or ti.get("new_string") or ""
+    if "content" in ti:
+        return ti["content"] or ""
+    edits = ti.get("edits") or ([{"old_string": ti.get("old_string", ""),
+                                  "new_string": ti.get("new_string", "")}] if "new_string" in ti else [])
+    if not edits:
+        return ""
+    try:
+        with open(ti.get("file_path", ""), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return "\n".join(e.get("new_string", "") for e in edits)   # 새 파일이면 조각만 본다
+    for e in edits:
+        old, new = e.get("old_string", ""), e.get("new_string", "")
+        text = text.replace(old, new, -1 if e.get("replace_all") else 1) if old else text + new
+    return text
 
 
 def main():

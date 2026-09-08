@@ -57,11 +57,33 @@ class _Text(HTMLParser):
             self.parts.append(data)
 
 
+def is_html(ctype, body):
+    """Would running an HTML parser over this body help, or destroy it?
+
+    Adapters and replayed recordings hand back text that is already plain prose. Parsing it as
+    HTML deletes any <word> span outright and, on a literal "<script>", throws away everything
+    after it — which then reads as 근거 없음 for a sentence that is right there in the source.
+    """
+    t = (ctype or "").lower()
+    if "html" in t or "xml" in t:
+        return True
+    if "plain" in t or "json" in t or "text/" in t:
+        return False
+    return bool(re.search(r"<[a-zA-Z!/][^>]*>", (body or "")[:2000]))
+
+
 def extract(html_text):
     """Return (visible_text, published_date_or_None)."""
     p = _Text()
     p.feed(html_text)
     return re.sub(r"\s+", " ", " ".join(p.parts)).strip(), p.published
+
+
+def readable_text(ctype, body):
+    """(text, published) — parses only what is actually markup."""
+    if is_html(ctype, body):
+        return extract(body or "")
+    return re.sub(r"\s+", " ", body or "").strip(), None
 
 
 def normalize(s):
@@ -165,7 +187,7 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
         if ok and "pdf" in (ctype or "").lower():
             kind = "unsupported-pdf"  # ponytail: PDF ceiling → PyMuPDF when needed
         elif ok:
-            text, published = extract(body)
+            text, published = readable_text(ctype, body)
             if has_source_text(status, text):
                 kind, score = match(claim, text, fuzzy)
         row = {"claim": claim, "url": url, "alive": ok, "status": status,
@@ -175,6 +197,16 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
         trace = getattr(fetcher, "trace", {}).get(url)
         if trace:
             row["trace"] = trace
+            # An archived copy is not the cited source as it stands now. Finding the sentence there
+            # still tells us something; NOT finding it does not — the live page may well contain it.
+            # "근거 없음" must never be said about a page we did not actually read (ADR 0002).
+            if kind == "none" and trace.get("archive"):
+                row["found"], row["score"] = "blocked", 0.0
+                trace["reason"] = "archive-only"
+                trace["options"] = [
+                    "원문이 아니라 아카이브 사본만 읽혔습니다. 잠시 뒤 다시 시도하면 원문에 닿을 수 있습니다",
+                    "브라우저에서 직접 열어 본문을 저장해 주시면 그 파일로 대조합니다",
+                ]
         results.append(row)
     kinds = [r["found"] for r in results]
     usage = getattr(fetcher, "usage", None)

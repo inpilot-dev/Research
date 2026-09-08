@@ -24,7 +24,9 @@ REFLINK = re.compile(r"\[([^\]\n]*)\]\[([^\]\n]+)\]")
 # 축약 참조: 문장 끝의 [1] 이 아래 [1]: url 을 가리킨다. ^로 시작하면 각주라 제외.
 SHORTCUT = re.compile(r"\[([^\]\n^][^\]\n]*)\](?![(\[:])")
 FOOTREF = re.compile(r"\[\^([^\]\s]+)\]")
-BARE = re.compile(r"<(https?://[^>\s]+)>|(?<![(\]<\"'])\b(https?://[^\s<>)\]\"']+)")
+BARE = re.compile(r"<(https?://[^>\s]+)>|(?<![(\]<\"'])\b(https?://[^\s<>)\]\"'`]+)")
+# 문장 끝의 마침표·쉼표는 주소가 아니다. 삼키면 404 가 되어 멀쩡한 인용이 확인 불가로 떨어진다.
+_TRAIL = ".,;:!?'\"`)]}>"
 # 문장 부호가 없는 줄(제목·표·목록 머리)은 주장이 아니다.
 SKIP_LINE = re.compile(r"^\s{0,3}(#{1,6}\s|\||\s*[-*+]\s*$|>\s*$|\[\^?[^\]]+\]:)")
 EMPHASIS = re.compile(r"(\*\*|__|\*|_|`)")
@@ -62,6 +64,7 @@ def _flatten(text, refs=()):
     text = SHORTCUT.sub(lambda m: "" if m.group(1).lower() in refs else m.group(1), text)
     text = BARE.sub("", text)
     text = EMPHASIS.sub("", text)
+    text = re.sub(r"\s+([.,;:!?])", r"\1", text)      # 각주를 지운 자리에 남는 " ." 를 붙인다
     return re.sub(r"\s+", " ", text).strip(" \t,;")
 
 
@@ -80,7 +83,7 @@ def _urls(sentence, refs):
         if m.group(1).lower() in refs:
             found.append(refs[m.group(1).lower()])
     for m in BARE.finditer(sentence):
-        found.append(m.group(1) or m.group(2))
+        found.append((m.group(1) or m.group(2)).rstrip(_TRAIL))
     seen, out = set(), []
     for u in found:  # 같은 문장이 같은 URL 을 두 번 가리켜도 주장은 하나
         if u not in seen:
@@ -111,7 +114,9 @@ def parse(md):
         urls = _urls(s, refs)
         text = _flatten(s, refs)
         # ponytail: 단정문 판정은 낱말 수 — 품사 분석은 이 도구가 할 일이 아니다.
-        if not _WORD.findall(text) or len(_WORD.findall(text)) < 4:
+        # 한국어는 교착어라 낱말 셋이면 이미 완결된 단정문이다("백신은 자폐를 유발한다").
+        # 여기서 버리면 검증도 못 받고 "출처 없음" 으로 세지지도 않아 통째로 사라진다.
+        if len(_WORD.findall(text)) < 3:
             continue
         if urls:
             claims += [{"claim": text, "url": u} for u in urls]

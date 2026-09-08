@@ -1,7 +1,7 @@
 {
   "url": "https://docs.python.org/3/library/does-not-exist-at-all.html",
   "status": 404,
-  "ctype": "text/html",
+  "ctype": "text/plain",
   "text": "Page not found — Python 3.14.7 documentation Theme Auto Light Dark Navigation index modules | Python » 3.14.7 Documentation » Page not found | Theme Auto Light Dark | Page not found Unfortunately we couldn't find the content you were looking for. « Navigation index modules | Python » 3.14.7 Documentation » Page not found | Theme Auto Light Dark | © Copyright 2001 Python Software Foundation. This page is licensed under the Python Software Foundation License Version 2. Examples, recipes, and other code in the documentation are additionally licensed under the Zero Clause BSD License. See History and License for more information. The Python Software Foundation is a non-profit corporation. Please donate. Last updated on Sep 07, 2026 (16:07 UTC). Found a bug ? Created using Sphinx 8.2.3.",
   "published": null,
   "via": null,

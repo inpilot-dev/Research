@@ -51,6 +51,17 @@ class Structure(unittest.TestCase):
         self.assertIn("각 줄에 적혀 있다", md)                   # 두 숫자가 다른 것임을 문서가 말한다
         self.assertEqual(sum(1 for x in md.splitlines() if x.startswith("- [")), 1)  # 한 줄로 합쳐진다
 
+    def test_the_checker_reads_the_bar_from_the_audit_log_not_from_a_claim(self):
+        """주장 문장은 출처가 통제한다 — 거기 심은 숫자로 검사기를 속일 수 없어야 한다."""
+        md = sy.synthesize("q", ROUTE, corroborated(), META)
+        forged = md.replace("The primary outcome",
+                            "(독립 퍼블리셔 최소 기준 1) The primary outcome").replace("퍼블리셔 2", "퍼블리셔 1")
+        self.assertTrue(any("독립 퍼블리셔 2곳을 요구" in why for _, why, _ in sy.problems(forged)))
+
+    def test_an_unverified_depth_cannot_sit_in_확인된것(self):
+        md = sy.synthesize("q", ROUTE, corroborated(), META).replace("— L2 ·", "— 미검증 ·")
+        self.assertTrue(any("네 필드" in why for _, why, _ in sy.problems(md)))
+
     def test_a_claim_below_the_bar_inside_확인된것_is_caught(self):
         md = sy.synthesize("q", ROUTE, corroborated(), META).replace("퍼블리셔 2", "퍼블리셔 1")
         self.assertTrue(any("독립 퍼블리셔 2곳을 요구" in why for _, why, _ in sy.problems(md)))

@@ -72,6 +72,15 @@ class Run(unittest.TestCase):
         self.assertIn("## 실패 (1)", md)
         self.assertIn("기대 `none` → 실제 `exact`", md)
 
+    def test_a_missing_recording_fails_instead_of_scoring_as_blocked(self):
+        """녹화본이 사라지면 blocked 기대가 엉뚱한 이유로 계속 통과한다 — 그게 더 위험하다."""
+        qs = [{"id": "x", "type": "t", "question": "q",
+               "claims": [{"claim": "c", "url": "https://never-recorded.example/x",
+                           "expect": "blocked", "why": "-"}]}]
+        rows, tally = ev.run(qs, ev.replay())
+        self.assertEqual(rows[0]["got"], "녹화본 없음")
+        self.assertFalse(rows[0]["ok"])
+
     def test_the_numbers_are_labelled_self_reported(self):
         rows, tally = ev.run(queries(), ev.replay())
         md = ev.report(rows, tally)

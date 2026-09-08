@@ -30,7 +30,10 @@ def _pattern(signal):
     s = signal.strip()
     if not _ASCII.fullmatch(s):
         return re.compile(re.escape(s))          # 한국어는 경계 개념이 없어 그대로 본다
-    return re.compile(r"\b" + re.escape(s) + (r"s?\b" if len(s) <= 3 else ""))
+    # `\b` 는 한글 앞에서 경계로 치지 않는다 — 파이썬의 \w 가 한글을 포함하기 때문이다.
+    # 그래서 "api를" 의 api 를 놓친다. 영숫자만 경계로 보도록 직접 쓴다.
+    tail = r"s?(?![A-Za-z0-9])" if len(s) <= 3 else ""
+    return re.compile(r"(?<![A-Za-z0-9])" + re.escape(s) + tail)
 
 
 def _hits(question, signals):
