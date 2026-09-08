@@ -14,31 +14,64 @@ import re
 import sys
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from cite_check import _KO, UNVERIFIED, _line  # noqa: E402
+from cite_check import _KO, UNVERIFIED, _line, normalize  # noqa: E402
 
 CONFLICT = {"none": "상충 없음", "conflict": "상충 있음", "single": "단일 출처", None: "상충 미판정"}
 STOPPED = {"done": "계획대로 끝남", "hardcap": "반복 한도에 걸려 중단", "budget": "예산이 떨어져 중단"}
 
 
+def _group(verified):
+    """같은 문장을 뒷받침한 퍼블리셔를 세어 주장 하나로 합친다.
+
+    퍼블리셔 수를 호출자에게서 받으면 문서 안에서 숫자가 어긋난다 — 주장 줄은 "퍼블리셔 2",
+    감사 로그는 "독립 퍼블리셔 1" 이 되는 식이다. 세는 쪽이 하나뿐이어야 그런 일이 없다.
+    """
+    out = {}
+    for c in verified:
+        key = normalize(c["claim"])
+        g = out.setdefault(key, {**c, "_publishers": set()})
+        g["_publishers"].add(c.get("publisher") or "")
+        if c.get("injection_suspect"):
+            g["injection_suspect"] = True
+        if c.get("conflict") == "conflict":
+            g["conflict"] = "conflict"
+    for g in out.values():
+        g["publishers"] = len(g["_publishers"] - {""}) or 1
+    return list(out.values())
+
+
 def _fields(c):
     """한 주장이 달고 나가야 하는 네 가지."""
-    pubs = c.get("publishers") or 1
+    pubs = c["publishers"]
     conflict = "single" if pubs < 2 and c.get("conflict") in (None, "none") else c.get("conflict")
-    return (f"L2" if c["found"] in ("exact", "fuzzy") else "미검증",
+    return ("L2" if c["found"] in ("exact", "fuzzy") else "미검증",
             f"퍼블리셔 {pubs}", CONFLICT.get(conflict, CONFLICT[None]))
 
 
 def synthesize(question, route, claims, meta):
     """→ 종합문 markdown. claims 는 코어가 판정한 결과에 퍼블리셔 수·상충 선언을 얹은 것."""
-    ok = [c for c in claims if c["found"] in ("exact", "fuzzy")]
+    grouped = _group([c for c in claims if c["found"] in ("exact", "fuzzy")])
     bad = [c for c in claims if c["found"] in UNVERIFIED]
-    # 유형·판단 이유는 주장이 아니라 감사 정보다 — 게이트가 지키는 본문에 섞지 않는다.
-    L = [f"# {_line(question)}", "", f"## 확인된 것 ({len(ok)})", ""]
-    for c in ok:
+    floor = route["settings"]["min_independent_publishers"]
+    # 출처 원문에는 있지만 이 유형이 요구하는 교차확인에는 못 미치는 주장. 미확인이 아니다 —
+    # 원문을 읽고 문장을 찾았다. 다만 한 곳만 말한 것을 합의처럼 보이게 두지 않는다.
+    ok = [c for c in grouped if c["publishers"] >= floor]
+    thin = [c for c in grouped if c["publishers"] < floor]
+
+    def bullet(c):
         depth, pubs, conflict = _fields(c)
         tag = f"[{c['publisher']}:{c['found']}" + (f" {c['score']}" if c["found"] == "fuzzy" else "") + "]"
         warn = " · ⚠ 인젝션 의심 출처" if c.get("injection_suspect") else ""
-        L.append(f"- {tag} {_line(c['claim'])} — {depth} · {pubs} · {conflict} · {_line(c['url'])}{warn}")
+        return f"- {tag} {_line(c['claim'])} — {depth} · {pubs} · {conflict} · {_line(c['url'])}{warn}"
+
+    # 유형·판단 이유는 주장이 아니라 감사 정보다 — 게이트가 지키는 본문에 섞지 않는다.
+    L = [f"# {_line(question)}", "", f"## 확인된 것 ({len(ok)})", ""]
+    L += [bullet(c) for c in ok]
+    if thin:
+        L += ["", f"## 확인됐으나 기준 미달 ({len(thin)})", "",
+              f"출처 원문에서 찾았지만 이 유형이 요구하는 독립 퍼블리셔 {floor}곳에 못 미친다. "
+              "한 곳만 말한 것을 여러 곳이 말한 것처럼 읽지 말 것.", ""]
+        L += [bullet(c) for c in thin]
     L += ["", f"## 미확인 ({len(bad)})", "",
           "아래는 검증을 통과하지 못했다. 거짓이라는 뜻이 아니라, 단정할 근거가 없다는 뜻이다.", ""]
     for c in bad:
@@ -53,7 +86,8 @@ def synthesize(question, route, claims, meta):
           f"- 반대 근거 탐색 {len(meta.get('refutations') or [])}회"
           + (": " + " · ".join(_line(q) for q in (meta.get("refutations") or [])[:5]) if meta.get("refutations") else ""),
           f"- 읽은 출처 {len({c['url'] for c in claims})}개 · 독립 퍼블리셔 "
-          f"{len({c['publisher'] for c in claims if c.get('publisher')})}"]
+          f"{len({c['publisher'] for c in claims if c.get('publisher')})}"
+          f" · 이 유형의 최소 기준 {floor}"]
     if any(c.get("injection_suspect") for c in claims):
         L.append(f"- ⚠ 인젝션 의심 출처 {sum(1 for c in claims if c.get('injection_suspect'))}건 "
                  "— 그 페이지의 지시문은 따르지 않았다. 내용은 데이터로만 썼다")
@@ -63,9 +97,14 @@ def synthesize(question, route, claims, meta):
 _CLAIM_LINE = re.compile(r"^- \[[^\]]+:(?:exact|fuzzy[^\]]*)\] .+ — (L2|미검증) · 퍼블리셔 \d+ · \S+")
 
 
+_FLOOR = re.compile(r"이 유형의 최소 기준 (\d+)")
+_PUBS = re.compile(r"· 퍼블리셔 (\d+) ·")
+
+
 def problems(md):
     """종합문이 규칙을 어긴 자리들. 빈 리스트면 내보내도 된다."""
     bad, section = [], ""
+    floor = int(m.group(1)) if (m := _FLOOR.search(md)) else 1
     for i, line in enumerate(md.splitlines(), 1):
         head = re.match(r"^\s*#{1,6}\s*(.+?)\s*$", line)
         if head:
@@ -73,8 +112,10 @@ def problems(md):
             continue
         if not line.startswith("- "):
             continue
-        if "확인된 것" in section and not _CLAIM_LINE.match(line):
+        if "확인" in section and "미확인" not in section and not _CLAIM_LINE.match(line):
             bad.append((i, "네 필드(주장·깊이·퍼블리셔 수·상충)를 갖추지 않은 주장", line.strip()))
+        if section.startswith("확인된 것") and (p := _PUBS.search(line)) and int(p.group(1)) < floor:
+            bad.append((i, f"이 유형은 독립 퍼블리셔 {floor}곳을 요구하는데 확인된 것에 들어 있다", line.strip()))
         if "미확인" in section and not any(line.startswith(f"- {k}:") for k in _KO.values()):
             bad.append((i, "미확인 항목이 사유 없이 단정문으로 적혔다", line.strip()))
     if "반대 근거 탐색 0회" in md:
