@@ -15,7 +15,7 @@ import sys
 # 리포트가 줄마다 따로 적는다.
 TOKEN = re.compile(r"\[[A-Za-z0-9.\-]+:(?:exact|fuzzy(?:\s+[0-9.]+)?|entails)\]")
 SECTION = re.compile(r"^\s*#{1,6}\s*(.+?)\s*$")
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*")
 # 섹션마다 요구하는 것이 다르다. 제목은 **정확히** 일치해야 한다 — 부분 일치로 두면
 # "## 미확인 항목에 대한 우리의 결론" 같은 제목 하나로 아무 단정문이나 통과시킬 수 있다.
 SECTIONS = ((re.compile(r"^미확인(\s*\(\d+\))?$"), "unverified"),   # 사유 딱지를 단 항목만
@@ -26,15 +26,40 @@ NOT_A_SENTENCE = re.compile(r"^\s*(\||[-*_=]{3,}|>\s*$|\s*·|```|~~~)")
 _WORD = re.compile(r"[A-Za-z가-힣0-9]+")
 
 
+def prose_lines(text):
+    """코드 블록 밖의 줄만 → [(줄번호, 줄), …].
+
+    펜스 규칙은 **여기 한 곳에만** 있다. 예전에는 `offenders()` 만 펜스를 건너뛰고
+    `looks_like_report()` 는 문자열 포함 검사였다 — 그래서 README 의 예시 출력 안에 있는
+    `## 검증됨` 이 리포트 제목으로 읽혀, 리포트가 아닌 문서가 게이트에 걸렸다.
+
+    닫는 펜스는 **여는 펜스와 같은 문자에 길이가 같거나 더 긴 것**만 인정한다. 그래야
+    ```` 안에 든 ``` 이 블록을 조기에 닫지 않는다.
+    """
+    out, marker = [], None
+    for i, line in enumerate(text.splitlines(), 1):
+        m = FENCE.match(line)
+        if m:
+            f = m.group(1)
+            if marker is None:
+                marker, opened = f, i
+                continue
+            if f[0] == marker[0] and len(f) >= len(marker):
+                marker = None
+                continue                 # 짧은 안쪽 펜스는 닫지 못하고 그냥 블록 내용이다
+        if marker is None:
+            out.append((i, line))
+    if marker is not None:
+        # 펜스가 닫히지 않았다. 무엇이 코드고 무엇이 산문인지 알 수 없다 — 애매하면 막는 쪽으로
+        # 간다(ADR 0003). 열린 펜스를 없는 것으로 보고 전부 산문으로 취급한다.
+        return [(i, ln) for i, ln in enumerate(text.splitlines(), 1) if i != opened]
+    return out
+
+
 def offenders(report):
     """규칙을 어긴 줄들 → [(줄번호, 줄), …]. 빈 리스트면 나가도 된다."""
-    kind, fenced, bad = "claim", False, []
-    for i, line in enumerate(report.splitlines(), 1):
-        if FENCE.match(line):
-            fenced = not fenced          # 코드 블록 안의 "## 감사 로그" 는 제목이 아니다
-            continue
-        if fenced:
-            continue
+    kind, bad = "claim", []
+    for i, line in prose_lines(report):
         head = SECTION.match(line)
         if head:
             title = head.group(1).strip()
@@ -58,8 +83,17 @@ def offenders(report):
 
 
 def looks_like_report(text):
-    """이 게이트가 관여할 문서인가 — 검증 리포트라고 스스로 말하는 것만 본다."""
-    return "## 검증됨" in text or "## 미확인" in text
+    """이 게이트가 관여할 문서인가 — 검증 리포트라고 스스로 말하는 것만 본다.
+
+    두 가지를 요구한다. 코드 블록 **밖**일 것 — 블록 안의 제목은 예시이지 이 문서의 제목이
+    아니다(README). 그리고 제목이 **줄 맨 앞**일 것 — 표 칸 안의 `## 미확인` 은 그 말을
+    인용한 것이지 섹션을 여는 것이 아니다(SKILL.md). 실제 리포트는 `render()` 가 항상 줄
+    맨 앞에 찍는다.
+
+    관여 여부만 정확해질 뿐, 관여하기로 한 문서의 판정은 조금도 달라지지 않는다 (ADR 0003).
+    """
+    return any((m := SECTION.match(ln)) and m.group(1).strip().startswith(("검증됨", "미확인"))
+               for _, ln in prose_lines(text))
 
 
 def explain(bad):

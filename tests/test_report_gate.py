@@ -106,6 +106,55 @@ class Gate(unittest.TestCase):
             self.assertNotIn(escape, src, f"게이트에 우회 경로가 생겼다: {escape}")
 
 
+class WhatTheGateEngagesWith(unittest.TestCase):
+    """#16 — 관여 여부는 정확해지되, 관여한 문서의 판정은 조금도 약해지지 않는다."""
+
+    NAKED = "이 문장은 토큰이 없는 단정문이다 완전히."
+
+    def doc(self, body):
+        return f"# 어떤 문서\n\n{body}\n"
+
+    def test_a_report_heading_inside_a_fence_does_not_engage_the_gate(self):
+        md = self.doc("예시 출력:\n\n```\n## 검증됨 (1)\n- 아무 문장\n```\n\n" + self.NAKED)
+        self.assertFalse(g.looks_like_report(md))
+
+    def test_the_repo_s_own_docs_are_not_reports(self):
+        """실제로 막혔던 것들이다 — README 는 펜스, SKILL.md 는 표 칸 안의 인라인 코드."""
+        root = os.path.join(os.path.dirname(__file__), "..")
+        for name in ("README.md", "CONTEXT.md", "skills/verify/SKILL.md", "evals/judge.md"):
+            with self.subTest(name=name), open(os.path.join(root, name), encoding="utf-8") as f:
+                self.assertFalse(g.looks_like_report(f.read()))
+
+    def test_a_heading_outside_a_fence_still_engages(self):
+        md = self.doc("## 검증됨 (0)\n\n" + self.NAKED)
+        self.assertTrue(g.looks_like_report(md))
+        self.assertTrue(g.offenders(md))          # 관여했으면 막는다
+
+    def test_a_heading_both_inside_and_outside_engages(self):
+        md = self.doc("```\n## 미확인 (9)\n```\n\n## 검증됨 (0)\n\n" + self.NAKED)
+        self.assertTrue(g.looks_like_report(md))
+
+    def test_an_unclosed_fence_engages_rather_than_hiding_the_document(self):
+        """애매하면 막는 쪽이다 — 열린 펜스로 게이트를 통째로 끌 수 있으면 안 된다."""
+        md = self.doc("```\n## 검증됨 (0)\n\n" + self.NAKED)
+        self.assertTrue(g.looks_like_report(md))
+        self.assertTrue(g.offenders(md))
+
+    def test_a_short_inner_fence_does_not_close_a_longer_one(self):
+        md = self.doc("````\n```\n## 검증됨 (0)\n```\n````\n\n" + self.NAKED)
+        self.assertFalse(g.looks_like_report(md))
+
+    def test_tilde_fences_work_the_same(self):
+        md = self.doc("~~~\n## 검증됨 (0)\n~~~\n\n" + self.NAKED)
+        self.assertFalse(g.looks_like_report(md))
+
+    def test_the_fence_rule_is_defined_once(self):
+        """offenders 와 looks_like_report 가 같은 함수를 쓴다 — 다시 갈라지면 #16 이 재발한다."""
+        import inspect
+        for fn in (g.offenders, g.looks_like_report):
+            self.assertIn("prose_lines", inspect.getsource(fn))
+
+
 if __name__ == "__main__":
     unittest.main()
 
