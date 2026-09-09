@@ -14,7 +14,9 @@ import re
 import sys
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from cite_check import _KO, UNVERIFIED, _line, normalize  # noqa: E402
+# 무엇이 "검증됨"인지는 코어가 정한다. 여기서 다시 적으면 판정 종류가 늘 때 이 파일만
+# 뒤처지고, 뒤처진 결과가 주장이 조용히 사라지는 것이다 (L3 를 붙였을 때 실제로 그랬다).
+from cite_check import _KO, VERIFIED, _line, normalize  # noqa: E402
 
 CONFLICT = {"none": "상충 없음", "conflict": "상충 있음", "single": "단일 출처", None: "상충 미판정"}
 STOPPED = {"done": "계획대로 끝남", "hardcap": "반복 한도에 걸려 중단", "budget": "예산이 떨어져 중단"}
@@ -44,14 +46,17 @@ def _fields(c):
     """한 주장이 달고 나가야 하는 네 가지."""
     pubs = c["publishers"]
     conflict = "single" if pubs < 2 and c.get("conflict") in (None, "none") else c.get("conflict")
-    return ("L2" if c["found"] in ("exact", "fuzzy") else "미검증",
-            f"퍼블리셔 {pubs}", CONFLICT.get(conflict, CONFLICT[None]))
+    # 기계가 대조한 것(L2)과 모델이 판단한 것(L3)을 사람이 섞어 읽으면 안 된다.
+    depth = {"exact": "L2", "fuzzy": "L2", "entails": "L3(의미)"}.get(c["found"], "미검증")
+    return (depth, f"퍼블리셔 {pubs}", CONFLICT.get(conflict, CONFLICT[None]))
 
 
 def synthesize(question, route, claims, meta):
     """→ 종합문 markdown. claims 는 코어가 판정한 결과에 퍼블리셔 수·상충 선언을 얹은 것."""
-    grouped = _group([c for c in claims if c["found"] in ("exact", "fuzzy")])
-    bad = [c for c in claims if c["found"] in UNVERIFIED]
+    grouped = _group([c for c in claims if c["found"] in VERIFIED])
+    # 검증되지 않은 것은 **전부** 미확인이다. `in UNVERIFIED` 로 적으면 목록에 없는 판정이
+    # 어느 쪽에도 안 들어가 문서에서 조용히 사라진다. 분할은 빠짐없어야 한다.
+    bad = [c for c in claims if c["found"] not in VERIFIED]
     floor = route["settings"]["min_independent_publishers"]
     # 출처 원문에는 있지만 이 유형이 요구하는 교차확인에는 못 미치는 주장. 미확인이 아니다 —
     # 원문을 읽고 문장을 찾았다. 다만 한 곳만 말한 것을 합의처럼 보이게 두지 않는다.
@@ -62,7 +67,9 @@ def synthesize(question, route, claims, meta):
         depth, pubs, conflict = _fields(c)
         tag = f"[{c['publisher']}:{c['found']}" + (f" {c['score']}" if c["found"] == "fuzzy" else "") + "]"
         warn = " · ⚠ 인젝션 의심 출처" if c.get("injection_suspect") else ""
-        return f"- {tag} {_line(c['claim'])} — {depth} · {pubs} · {conflict} · {_line(c['url'])}{warn}"
+        line = f"- {tag} {_line(c['claim'])} — {depth} · {pubs} · {conflict} · {_line(c['url'])}{warn}"
+        # L3 는 근거 문장 없이는 판정도 없다 (ADR 0001). 리포트가 싣는 것을 종합문이 떨구지 않는다.
+        return line + (f"\n  · 근거 문장(원문에 있는지 기계가 재확인): {_line(c['quote'])}" if c.get("quote") else "")
 
     # 유형·판단 이유는 주장이 아니라 감사 정보다 — 게이트가 지키는 본문에 섞지 않는다.
     L = [f"# {_line(question)}", "", f"## 확인된 것 ({len(ok)})", ""]
@@ -75,7 +82,7 @@ def synthesize(question, route, claims, meta):
     L += ["", f"## 미확인 ({len(bad)})", "",
           "아래는 검증을 통과하지 못했다. 거짓이라는 뜻이 아니라, 단정할 근거가 없다는 뜻이다.", ""]
     for c in bad:
-        L.append(f"- {_KO[c['found']]}: {_line(c['claim'])} — {_line(c['url'])}")
+        L.append(f"- {_KO.get(c['found'], c['found'])}: {_line(c['claim'])} — {_line(c['url'])}")
     L += ["", "## 감사 로그", "",
           f"- 유형: {_line(route['settings']['label'])} · {_line(route['reason'])}",
           f"- 검증 깊이 기준: {_line(route['settings']['depth'])} · "
@@ -99,9 +106,10 @@ def synthesize(question, route, claims, meta):
 
 # 필드는 줄 **끝**에 붙는다. 앞쪽 어디서나 찾으면 주장 문장에 "· 퍼블리셔 9 ·" 를 심어
 # 검사기를 속일 수 있다 — 출처 페이지가 주장 문장을 통제한다는 것을 잊으면 안 된다.
-_CLAIM_LINE = re.compile(r"^- \[[^\]]+:(?:exact|fuzzy[^\]]*)\] .+ — L2 · 퍼블리셔 \d+ · [^·]+ · \S+"
-                         r"(?: · [^·]+)*$")
-_TAIL = re.compile(r"— L2 · 퍼블리셔 (\d+) · ")
+_DEPTH = r"(?:L2|L3\(의미\))"
+_CLAIM_LINE = re.compile(r"^- \[[^\]]+:(?:exact|fuzzy[^\]]*|entails)\] .+ — " + _DEPTH +
+                         r" · 퍼블리셔 \d+ · [^·]+ · \S+(?: · [^·]+)*$")
+_TAIL = re.compile(r"— " + _DEPTH + r" · 퍼블리셔 (\d+) · ")
 
 
 _FLOOR = re.compile(r"독립 퍼블리셔 최소 기준 (\d+)")
@@ -118,6 +126,8 @@ def problems(md):
         if head:
             section = head.group(1)
             continue
+        if line.lstrip().startswith("· 근거 문장"):
+            continue                      # 주장 줄이 아니라 그 줄에 붙은 근거다
         if not line.startswith("- "):
             continue
         if "확인" in section and "미확인" not in section and not _CLAIM_LINE.match(line):

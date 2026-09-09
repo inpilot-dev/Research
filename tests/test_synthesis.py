@@ -138,5 +138,52 @@ class InjectedContentIsInert(unittest.TestCase):
         self.assertEqual(sy.problems(md), [])
 
 
+class L3AndUnknownVerdicts(unittest.TestCase):
+    """판정 종류가 늘었을 때 종합문이 주장을 조용히 떨구지 않는지."""
+
+    QUOTE = "Those who received remdesivir had a median recovery time of 10 days."
+
+    def entailed(self, **kw):
+        return corroborated(found="entails", score=0.0, quote=self.QUOTE, **kw)
+
+    def test_an_l3_claim_reaches_the_document_at_all(self):
+        """#12 회귀: synthesis 가 exact/fuzzy 만 알던 동안 entails 주장은 어느 섹션에도 안 들어갔다."""
+        md = sy.synthesize("q", ROUTE, self.entailed(), META)
+        self.assertIn("median recovery", md)
+        self.assertIn("[pubmed.ncbi.nlm.nih.gov:entails]", md)
+        self.assertEqual(sy.problems(md), [])
+        self.assertEqual(g.offenders(md), [])
+
+    def test_an_l3_claim_is_labelled_l3_not_l2(self):
+        """기계가 대조한 것과 모델이 판단한 것을 사람이 섞어 읽으면 안 된다."""
+        md = sy.synthesize("q", ROUTE, self.entailed(), META)
+        line = next(x for x in md.splitlines() if "entails]" in x)
+        self.assertIn("— L3(의미) ·", line)
+        self.assertNotIn("— L2 ·", line)
+
+    def test_an_l3_claim_carries_its_quote(self):
+        md = sy.synthesize("q", ROUTE, self.entailed(), META)
+        self.assertIn(self.QUOTE, md)
+        self.assertIn("근거 문장(원문에 있는지 기계가 재확인)", md)
+
+    def test_an_unknown_verdict_lands_in_미확인_and_fails_loudly(self):
+        """빠짐없는 분할: 모르는 판정은 사라지는 대신 미확인으로 가고 게이트가 잡는다."""
+        md = sy.synthesize("q", ROUTE, [claim(found="weird-new-kind", score=0.0)], META)
+        self.assertIn("weird-new-kind", md.split("## 미확인")[1])
+        self.assertTrue(sy.problems(md))
+        self.assertTrue(g.offenders(md))
+
+    def test_every_claim_appears_somewhere(self):
+        """어떤 판정이 와도 주장 수가 줄지 않는다 — 이것이 지켜야 할 불변식이다."""
+        claims = (corroborated()
+                  + [claim(claim="Paraphrased.", found="entails", score=0.0, quote=self.QUOTE),
+                     claim(claim="Absent sentence.", found="none"),
+                     claim(claim="Never read.", found="blocked"),
+                     claim(claim="A pdf.", found="unsupported-pdf")])
+        md = sy.synthesize("q", ROUTE, claims, META)
+        for text in ("The primary outcome", "Paraphrased.", "Absent sentence.", "Never read.", "A pdf."):
+            self.assertIn(text, md)
+
+
 if __name__ == "__main__":
     unittest.main()
