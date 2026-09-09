@@ -19,5 +19,15 @@
                "protocolSection.descriptionModule.detailedDescription"],
     "landing": "protocolSection.identificationModule.nctId"
   },
-  "note": "연구 페이지가 React SPA 라 직접 fetch 하면 본문이 없다(사유 dynamic, 실측). 헤드리스 브라우저로 그리는 것보다 이 API 가 빠르고 구조화돼 있다. 평가변수·결과 배열은 아직 안 읽는다 — 문자열 목록이 아니라 객체 목록이다."
+  "structured": {
+    "id": "protocolSection.identificationModule.nctId",
+    "title": "protocolSection.identificationModule.officialTitle",
+    "primary_outcomes": "protocolSection.outcomesModule.primaryOutcomes",
+    "secondary_outcomes": "protocolSection.outcomesModule.secondaryOutcomes",
+    "outcome_fields": {"measure": "measure", "time_frame": "timeFrame", "description": "description"},
+    "dates": {"registered": "protocolSection.statusModule.studyFirstSubmitDate",
+              "start": "protocolSection.statusModule.startDateStruct.date",
+              "primary_completion": "protocolSection.statusModule.primaryCompletionDateStruct.date"}
+  },
+  "note": "연구 페이지가 React SPA 라 직접 fetch 하면 본문이 없다(사유 dynamic, 실측). 헤드리스 브라우저로 그리는 것보다 이 API 가 빠르고 구조화돼 있다. 평가변수는 문자열 목록이 아니라 객체 목록이라 text.fields 로는 못 읽는다 — 대조에 필요한 것은 문구 하나가 아니라 measure·timeFrame 의 짝이므로 structured 에 따로 적었다. scripts/prereg.py 가 이 자리를 읽는다."
 }

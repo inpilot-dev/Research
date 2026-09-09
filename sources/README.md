@@ -18,6 +18,7 @@
 | `text.fields` | `json` 일 때 대조할 텍스트가 있는 점 표기 경로들 |
 | `text.inverted_index` | 역색인으로 저장된 초록의 경로 (OpenAlex) — 원문 순서로 되돌린다 |
 | `text.landing` | 사람이 열 랜딩 URL 이 있는 경로 |
+| `structured` | 문장 대조가 아니라 **필드 대조**가 필요할 때 쓰는 경로 묶음. `text.fields` 는 문자열을 이어 붙여 원문 텍스트를 만들지만, 평가변수처럼 `measure`·`timeFrame` 이 짝을 이룬 **객체 목록**은 그렇게 이으면 짝이 깨진다. `id`·`title`·`primary_outcomes`·`secondary_outcomes`(목록 경로) · `outcome_fields`(목록 안 객체의 키 이름) · `dates`(`registered`·`start`·`primary_completion`). 이 자리를 읽는 것은 `scripts/prereg.py` 하나뿐이고, 없는 어댑터는 그냥 건너뛴다 |
 | `usage_headers` | 응답에서 감사 로그로 옮길 사용량·비용 헤더 |
 | `note` | 실측으로 알게 된 것. 왜 이렇게 설정했는지 |
 
