@@ -299,7 +299,8 @@ def _pdf_text(body, extractor):
     return (text, "") if (text or "").strip() else ("", "scan")
 
 
-def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extractor=None):
+def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extractor=None,
+          conflict_judge=None):
     results, cache, texts, pdf_note, canon = [], {}, {}, [], {}
     for it in items:
         claim, url = it["claim"], it["url"]
@@ -350,6 +351,10 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extracto
         results.append(row)
     l3 = _run_l3(results, texts, judge) if judge is not None else None
     collapsed = _resolve_origins(results, texts, canon)
+    # 상충은 원출처가 정해진 뒤에 본다 — 같은 통신사 기사 둘이 어긋나는 것은 상충이 아니다.
+    from conflict import apply as _apply, find as _find   # lazy: 판정기가 없으면 아무 일도 없다
+    declarations, conflict_log = _find(results, texts, conflict_judge)
+    _apply(results, declarations)
     kinds = [r["found"] for r in results]
     usage = getattr(fetcher, "usage", None)
     summary = {"n": len(results), "alive": sum(r["alive"] for r in results),
@@ -362,6 +367,8 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extracto
         summary["api_usage"] = dict(usage)
     if l3:
         summary["l3"] = l3
+    if conflict_log:
+        summary["conflict"] = conflict_log
     if pdf_note:
         summary["pdf"] = {k: pdf_note.count(k) for k in sorted(set(pdf_note))}
         summary["pdf"]["extractor"] = str(getattr(pdf_extractor, "name", "") or "없음")
@@ -460,6 +467,13 @@ def render(out, deep_requested=False):
           f"- 판정: exact {s['exact']} / fuzzy {s['fuzzy']} / none {s['none']} / blocked {s['blocked']} / pdf {s['unsupported_pdf']}",
           f"- 독립 퍼블리셔 {s['unique_publishers']} (원출처 기준 — 통신사 크레딧·canonical·소유주·문단 중복으로 수렴 판정)",
           f"- 검증 깊이: {depth}"]
+    if cf := s.get("conflict"):
+        L.append(f"- 상충: {cf['pairs']}쌍 판정 · 모순 {cf['conflict']} · 무관 {cf['independent']} · "
+                 f"같은 말 {cf['same']} · 실패 {cf['failed']} · 모델 {_line(cf['model'])}")
+        for e in sorted(set(cf["errors"])):
+            L.append(f"  - 상충 판정 실패({cf['errors'].count(e)}건): {_line(e)} — 그 쌍은 상충 미판정")
+    elif deep_requested:
+        L.append("- 상충: 판정기가 없어 판정하지 않았습니다 — `상충 없음` 이 아니라 `상충 미판정` 입니다")
     for pub, origin, why in (s.get("collapsed") or []):
         # 조용히 숫자만 줄이지 않는다. 왜 하나로 셌는지 사람이 읽고 반박할 수 있어야 한다.
         L.append(f"- 원출처 수렴: {_line(pub) or '(판별 실패)'}"
@@ -541,7 +555,7 @@ def unverified_count(summary):
     return sum(summary[k.replace("-", "_")] for k in UNVERIFIED)
 
 
-def main(argv=None, fetcher=None, judge=None, pdf_extractor=None):
+def main(argv=None, fetcher=None, judge=None, pdf_extractor=None, conflict_judge=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("file", help="claims JSON path, or - for stdin")
     ap.add_argument("--fuzzy", type=float, default=0.85, help="fuzzy match threshold (default 0.85)")
@@ -550,7 +564,7 @@ def main(argv=None, fetcher=None, judge=None, pdf_extractor=None):
     ap.add_argument("--report", action="store_true", help="print a markdown report instead of JSON")
     ap.add_argument("--json", metavar="PATH", help="also write results JSON to PATH (one fetch, both artifacts)")
     ap.add_argument("--deep", action="store_true",
-                    help="run L3 (semantic entailment) on claims L2 could not match — needs an LLM judge")
+                    help="run L3 (semantic entailment) and conflict detection — needs an LLM judge")
     ap.add_argument("--model", help="model for the L3 judge (default: the claude CLI default)")
     ap.add_argument("--no-pdf", action="store_true", help="skip PDF text extraction even if pypdf is installed")
     ap.add_argument("--no-access", action="store_true", help="plain fetch only — no access ladder")
@@ -561,8 +575,10 @@ def main(argv=None, fetcher=None, judge=None, pdf_extractor=None):
     a = ap.parse_args(argv)
     if a.deep and judge is None:
         try:  # lazy: 판정기는 코어 밖이다. 없으면 L2 결과 그대로 남고 감사 로그에 그렇게 적힌다.
-            from judge_llm import ClaudeCLI
+            from judge_llm import ClaudeCLI, ConflictCLI
             judge = ClaudeCLI(model=a.model)
+            if conflict_judge is None:      # --deep 하나로 의미 판정 두 가지를 켠다
+                conflict_judge = ConflictCLI(model=a.model)
         except Exception as e:
             print(f"[cite_check] --deep: L3 판정기를 쓸 수 없습니다 ({e}) — L2 결과 그대로 둡니다.", file=sys.stderr)
     if pdf_extractor is None and not a.no_pdf:
@@ -578,7 +594,8 @@ def main(argv=None, fetcher=None, judge=None, pdf_extractor=None):
             allow = {h.strip(): True for h in a.allow_session.split(",") if h.strip()}
             fetcher = AccessLadder(tls=not a.no_tls, budget=a.budget,
                                    allow_session={**_load_allow(), **allow})
-    out = check(items, a.fuzzy, a.timeout, fetcher=fetcher, judge=judge, pdf_extractor=pdf_extractor)
+    out = check(items, a.fuzzy, a.timeout, fetcher=fetcher, judge=judge,
+                pdf_extractor=pdf_extractor, conflict_judge=conflict_judge)
     out["summary"]["unsourced"] = unsourced
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:

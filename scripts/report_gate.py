@@ -20,7 +20,9 @@ FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*")
 # "## 미확인 항목에 대한 우리의 결론" 같은 제목 하나로 아무 단정문이나 통과시킬 수 있다.
 SECTIONS = ((re.compile(r"^미확인(\s*\(\d+\))?$"), "unverified"),   # 사유 딱지를 단 항목만
             (re.compile(r"^감사 로그$"), "audit"),                     # 기록이지 주장이 아니다
-            (re.compile(r"^확인됐으나 기준 미달(\s*\(\d+\))?$"), "thin"))  # 주장 줄엔 토큰이 필요
+            (re.compile(r"^확인됐으나 기준 미달(\s*\(\d+\))?$"), "thin"),   # 주장 줄엔 토큰이 필요
+            # 상충 섹션도 같다 — 섹션 설명문은 주장이 아니고, 주장 줄은 여전히 토큰을 단다.
+            (re.compile(r"^상충(\s*\(\d+\))?$"), "thin"))
 UNVERIFIED_LABELS = ("근거 없음:", "확인 불가:", "미지원(PDF):")
 NOT_A_SENTENCE = re.compile(r"^\s*(\||[-*_=]{3,}|>\s*$|\s*·|```|~~~)")
 _WORD = re.compile(r"[A-Za-z가-힣0-9]+")

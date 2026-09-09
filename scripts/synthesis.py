@@ -62,8 +62,12 @@ def synthesize(question, route, claims, meta):
     floor = route["settings"]["min_independent_publishers"]
     # 출처 원문에는 있지만 이 유형이 요구하는 교차확인에는 못 미치는 주장. 미확인이 아니다 —
     # 원문을 읽고 문장을 찾았다. 다만 한 곳만 말한 것을 합의처럼 보이게 두지 않는다.
-    ok = [c for c in grouped if c["publishers"] >= floor]
-    thin = [c for c in grouped if c["publishers"] < floor]
+    # 서로 모순인 주장은 둘 다 `확인된 것` 에서 내려간다. 어느 쪽이 옳은지 이 파일은 모르고,
+    # 한쪽을 고르는 순간 이 도구는 검증기가 아니라 심판이 된다.
+    clash = [c for c in grouped if c.get("conflict") == "conflict"]
+    rest = [c for c in grouped if c.get("conflict") != "conflict"]
+    ok = [c for c in rest if c["publishers"] >= floor]
+    thin = [c for c in rest if c["publishers"] < floor]
 
     def bullet(c):
         depth, pubs, conflict = _fields(c)
@@ -76,6 +80,14 @@ def synthesize(question, route, claims, meta):
     # 유형·판단 이유는 주장이 아니라 감사 정보다 — 게이트가 지키는 본문에 섞지 않는다.
     L = [f"# {_line(question)}", "", f"## 확인된 것 ({len(ok)})", ""]
     L += [bullet(c) for c in ok]
+    if clash:
+        L += ["", f"## 상충 ({len(clash)})", "",
+              "출처 원문에서 찾았지만 서로 어긋난다. **어느 쪽이 옳은지 이 도구는 모른다** — "
+              "둘 다 검증됐다고 읽지 말 것.", ""]
+        for c in clash:
+            L.append(bullet(c))
+            for q in (c.get("conflict_quotes") or [])[:2]:
+                L.append(f"  · 어긋나는 근거(원문에 있는지 기계가 재확인): {_line(q)}")
     if thin:
         L += ["", f"## 확인됐으나 기준 미달 ({len(thin)})", "",
               f"출처 원문에서 찾았지만 이 유형이 요구하는 독립 퍼블리셔 {floor}곳에 못 미친다. "
@@ -132,6 +144,8 @@ def problems(md):
             continue                      # 주장 줄이 아니라 그 줄에 붙은 근거다
         if not line.startswith("- "):
             continue
+        if section.startswith("상충") and not _CLAIM_LINE.match(line):
+            bad.append((i, "네 필드를 갖추지 않은 주장", line.strip()))
         if "확인" in section and "미확인" not in section and not _CLAIM_LINE.match(line):
             bad.append((i, "네 필드(주장·깊이·퍼블리셔 수·상충)를 갖추지 않은 주장", line.strip()))
         if section.startswith("확인된 것") and (p := _TAIL.search(line)) and int(p.group(1)) < floor:
