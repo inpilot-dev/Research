@@ -2,3 +2,7 @@
 # 코어(scripts/cite_check.py)는 표준 라이브러리만 쓴다 (ADR 0001).
 curl_cffi>=0.7      # 칸 3: TLS 위장. 봇 벽(403·Cloudflare)에 유효. 대상 ToS 확인은 사용자 몫.
 playwright>=1.44    # 칸 4: 비로그인 헤드리스 렌더링. 설치 후 `playwright install chromium` 필요.
+pypdf>=5.0          # PDF 본문 추출. 없으면 PDF 출처가 `미지원(PDF)` 로 나간다.
+                    # 2026-09-09 실측: 학술 인용 18건 중 6건이 PDF, 6건 모두 텍스트 층 있음
+                    # (evals/measure_pdf.py). pdfminer.six 는 arXiv 세로 사이드바를 흘리고
+                    # PyMuPDF 는 AGPL·대용량이라 고르지 않았다.

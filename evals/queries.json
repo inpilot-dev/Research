@@ -55,4 +55,11 @@
 {"id":"sem-05","type":"semantic-entailment","question":"difflib 의 SequenceMatcher 는 무엇을 비교할 수 있나?","claims":[
   {"claim":"SequenceMatcher can compare sequences whose elements are hashable, not only strings.","url":"https://docs.python.org/3/library/difflib.html","expect":"entails","l3":true,"why":"문서의 서술을 바꿔 쓴 것"},
   {"claim":"SequenceMatcher.ratio() runs in time linear in the length of its inputs.","url":"https://docs.python.org/3/library/difflib.html","expect":"none","l3":true,"why":"문서는 최악의 경우가 그보다 나쁘다고 말한다 — 그럴듯하지만 원문이 하지 않는 말"}]}
+,
+{"id":"pdf-01","type":"pdf-sources","question":"Transformer 논문은 기존 모델을 어떻게 규정했나?","claims":[
+  {"claim":"The dominant sequence transduction models are based on complex recurrent or convolutional neural networks","url":"https://arxiv.org/pdf/1706.03762","expect":"exact","why":"PDF 본문의 원문 문장 — 추출기가 없으면 미지원(PDF) 로 떨어진다"}]},
+{"id":"pdf-02","type":"pdf-sources","question":"같은 PDF 에 없는 문장을 대면 어떻게 되나?","claims":[
+  {"claim":"The Transformer was trained for six months on ten thousand GPUs and achieved a BLEU score of 99.","url":"https://arxiv.org/pdf/1706.03762","expect":"none","why":"원문을 읽었고 그런 문장이 없다 — 확인 불가가 아니라 근거 없음이어야 한다"}]},
+{"id":"pdf-03","type":"pdf-sources","question":"기관 보고서 PDF 도 같은 경로로 읽히나?","claims":[
+  {"claim":"PROPOSED AMENDMENTS NOT RATIFIED BY THE STATES","url":"https://www.govinfo.gov/content/pkg/GPO-CONAN-1992/pdf/GPO-CONAN-1992-8.pdf","expect":"exact","why":"arXiv 말고 다른 생산자의 PDF — 추출이 한 곳에만 맞춰지지 않았는지"}]}
 ]

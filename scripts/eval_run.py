@@ -32,7 +32,13 @@ def record(url, timeout=20):
     from access_ladder import AccessLadder
     lad = AccessLadder(allow_session={}, budget=45)
     status, ctype, body = lad(url, timeout)
-    text, published = cc.readable_text(ctype, body) if body else ("", None)
+    if isinstance(body, bytes):
+        # PDF 는 바이트로 온다. 녹화본에는 **추출된 텍스트**를 남긴다 — 재생 때 다시 추출하면
+        # 평가가 추출기 설치 여부에 흔들리고, 그건 회귀 평가가 아니다.
+        from pdf_text import extract
+        text, published = extract(body), None
+    else:
+        text, published = cc.readable_text(ctype, body) if body else ("", None)
     tr = lad.trace.get(url, {})
     # 저장하는 것은 이미 추출된 텍스트다. content-type 을 html 로 적어 두면 재생할 때 한 번 더
     # 파싱되어 <...> 조각이 지워지고, 그 결과 원문에 있는 문장이 근거 없음으로 나온다.

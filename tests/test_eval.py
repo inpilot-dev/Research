@@ -23,7 +23,7 @@ class QuerySet(unittest.TestCase):
         for q in queries():
             counts[q["type"]] = counts.get(q["type"], 0) + 1
         self.assertEqual(counts, {"academic-literature": 7, "tech-docs": 7, "quick-facts": 6,
-                                  "semantic-entailment": 5})
+                                  "semantic-entailment": 5, "pdf-sources": 3})
 
     def test_every_claim_says_what_it_expects_and_why(self):
         for q in queries():

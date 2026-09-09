@@ -154,8 +154,23 @@ def has_source_text(status, text):
     return status != 203 and len(sentences(text)) >= 2 and not _WALL.search(text)
 
 
+def is_pdf(ctype, body):
+    """PDF 인가. content-type 을 믿되 매직 바이트를 더 믿는다.
+
+    application/octet-stream 으로 PDF 를 내려주는 서버가 실재한다 — 그런 응답을 HTML 파서에
+    넣으면 본문이 통째로 사라지고, 그 결과가 `근거 없음` 으로 나간다.
+    """
+    if "pdf" in (ctype or "").lower():
+        return True
+    head = body[:1024] if isinstance(body, bytes) else (body or "")[:1024].encode("utf-8", "replace")
+    return head.lstrip().startswith(b"%PDF-")
+
+
 def fetch(url, timeout=10):
-    """Return (status, content_type, body_text). status None when we never got a response.
+    """Return (status, content_type, body). status None when we never got a response.
+
+    본문은 보통 str 이지만 **PDF 면 bytes 그대로** 돌려준다. 문자열로 디코딩하는 순간
+    ("replace") 바이트가 되돌릴 수 없게 망가져 어떤 추출기도 읽을 수 없다.
 
     Request() itself raises on a malformed URL, so it is inside the try: one bad citation in a
     list must not sink the whole run. HTTPException covers IncompleteRead, which is neither an
@@ -164,8 +179,10 @@ def fetch(url, timeout=10):
     try:
         req = Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
         with urlopen(req, timeout=timeout) as r:
-            ctype = r.headers.get("Content-Type", "")
-            return r.status, ctype, r.read().decode(r.headers.get_content_charset() or "utf-8", "replace")
+            ctype, raw = r.headers.get("Content-Type", ""), r.read()
+            if is_pdf(ctype, raw):
+                return r.status, ctype, raw
+            return r.status, ctype, raw.decode(r.headers.get_content_charset() or "utf-8", "replace")
     except HTTPError as e:
         return e.code, "", ""
     except (URLError, TimeoutError, ValueError, OSError, HTTPException):
@@ -228,8 +245,26 @@ def _run_l3(results, texts, judge):
     return log
 
 
-def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None):
-    results, cache, texts = [], {}, {}
+def _pdf_text(body, extractor):
+    """PDF 바이트 → (텍스트, 사유). 사유가 있으면 대조하지 않는다.
+
+    사유는 셋으로만 갈린다 — `missing`(추출기가 없다) · `scan`(텍스트 층이 없다) ·
+    `broken`(추출기가 예외를 던졌다). 셋 다 "원문에 그 문장이 없다"가 아니다.
+    """
+    if extractor is None:
+        return "", "missing"
+    if not isinstance(body, bytes):
+        # 재생 녹화본처럼 이미 문자열이 된 응답. 바이트가 없으면 추출도 없다.
+        return "", "missing"
+    try:
+        text = extractor(body)
+    except Exception as e:
+        return "", ("missing" if type(e).__name__ == "PdfUnavailable" else "broken")
+    return (text, "") if (text or "").strip() else ("", "scan")
+
+
+def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extractor=None):
+    results, cache, texts, pdf_note = [], {}, {}, []
     for it in items:
         claim, url = it["claim"], it["url"]
         if url not in cache:
@@ -239,8 +274,20 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None):
         # Invariant (ADR 0002): "none" (근거 없음) is only ever produced by a real match attempt on
         # real source text. Anything that stopped us from reading the source is "blocked" (확인 불가).
         published, kind, score = None, "blocked", 0.0
-        if ok and "pdf" in (ctype or "").lower():
-            kind = "unsupported-pdf"  # ponytail: PDF ceiling → PyMuPDF when needed
+        if ok and is_pdf(ctype, body):
+            text, why = _pdf_text(body, pdf_extractor)
+            if why:
+                # 추출기가 없다 = 우리가 아직 못 하는 것(미지원). 추출은 됐는데 글자가 없다 =
+                # 스캔본이라 못 읽은 것(확인 불가). 어느 쪽도 `근거 없음` 이 아니다.
+                kind = "unsupported-pdf" if why == "missing" else "blocked"
+                pdf_note.append(why)
+            elif has_source_text(status, text):
+                texts[url] = text
+                kind, score = match(claim, text, fuzzy)
+            else:
+                # 표지 한 장짜리처럼 문장이 모자란 PDF. HTML 과 같은 기준을 쓴다.
+                kind = "blocked"
+                pdf_note.append("thin")
         elif ok:
             text, published = readable_text(ctype, body)
             texts[url] = text
@@ -274,13 +321,16 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None):
         summary["api_usage"] = dict(usage)
     if l3:
         summary["l3"] = l3
+    if pdf_note:
+        summary["pdf"] = {k: pdf_note.count(k) for k in sorted(set(pdf_note))}
+        summary["pdf"]["extractor"] = str(getattr(pdf_extractor, "name", "") or "없음")
     return {"results": results, "summary": summary}
 
 
 _KO = {"none": "근거 없음", "blocked": "확인 불가", "unsupported-pdf": "미지원(PDF)"}
 _WHY = {"none": "출처 원문에 해당 문장이 없음",
-        "blocked": "출처에 접근하지 못함(죽은 링크·차단·203 봇 벽·동의벽·빈 본문) — 근거 없음과 다르다",
-        "unsupported-pdf": "PDF 본문 추출은 v1 미지원"}
+        "blocked": "출처에 접근하지 못함(죽은 링크·차단·203 봇 벽·동의벽·빈 본문·스캔본 PDF) — 근거 없음과 다르다",
+        "unsupported-pdf": "PDF 추출기가 없어 본문을 읽지 못함 (`pip install pypdf`)"}
 VERIFIED = ("exact", "fuzzy", "entails")
 UNVERIFIED = ("none", "blocked", "unsupported-pdf")
 
@@ -369,6 +419,15 @@ def render(out, deep_requested=False):
           f"- 판정: exact {s['exact']} / fuzzy {s['fuzzy']} / none {s['none']} / blocked {s['blocked']} / pdf {s['unsupported_pdf']}",
           f"- 독립 퍼블리셔 {s['unique_publishers']} (www. 제거한 호스트 기준; 순환보고 1차 근사)",
           f"- 검증 깊이: {depth}"]
+    if pdf := s.get("pdf"):
+        marks = {"missing": f"추출기 없어 건너뜀 {pdf.get('missing', 0)}건",
+                 "scan": f"스캔본(텍스트 층 없음) {pdf.get('scan', 0)}건 — 확인 불가",
+                 "broken": f"추출 실패 {pdf.get('broken', 0)}건 — 확인 불가",
+                 "thin": f"문장이 모자람 {pdf.get('thin', 0)}건 — 확인 불가"}
+        L.append("- PDF: " + " · ".join(v for k, v in marks.items() if pdf.get(k))
+                 + f" · 추출기 {_line(pdf['extractor'])}")
+        if pdf.get("missing"):
+            L.append("  - `pip install pypdf` 를 하면 이 출처들의 본문을 대조할 수 있습니다")
     if l3:
         L.append(f"- L3: {l3['ran']}건 시도 · 뒷받침 {l3['supported']} · 뒷받침 안 됨 {l3['unsupported']} · "
                  f"실패 {l3['failed']} · 모델 {_line(l3['model'])}")
@@ -437,7 +496,7 @@ def unverified_count(summary):
     return sum(summary[k.replace("-", "_")] for k in UNVERIFIED)
 
 
-def main(argv=None, fetcher=None, judge=None):
+def main(argv=None, fetcher=None, judge=None, pdf_extractor=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("file", help="claims JSON path, or - for stdin")
     ap.add_argument("--fuzzy", type=float, default=0.85, help="fuzzy match threshold (default 0.85)")
@@ -448,6 +507,7 @@ def main(argv=None, fetcher=None, judge=None):
     ap.add_argument("--deep", action="store_true",
                     help="run L3 (semantic entailment) on claims L2 could not match — needs an LLM judge")
     ap.add_argument("--model", help="model for the L3 judge (default: the claude CLI default)")
+    ap.add_argument("--no-pdf", action="store_true", help="skip PDF text extraction even if pypdf is installed")
     ap.add_argument("--no-access", action="store_true", help="plain fetch only — no access ladder")
     ap.add_argument("--no-tls", action="store_true", help="disable rung 3 (TLS impersonation)")
     ap.add_argument("--allow-session", metavar="HOSTS", default="",
@@ -460,6 +520,11 @@ def main(argv=None, fetcher=None, judge=None):
             judge = ClaudeCLI(model=a.model)
         except Exception as e:
             print(f"[cite_check] --deep: L3 판정기를 쓸 수 없습니다 ({e}) — L2 결과 그대로 둡니다.", file=sys.stderr)
+    if pdf_extractor is None and not a.no_pdf:
+        try:  # lazy: 없으면 지금까지처럼 미지원(PDF) 로 나가고 감사 로그에 남는다
+            from pdf_text import extract as pdf_extractor
+        except ImportError:
+            pdf_extractor = None
     items, unsourced = load_claims(a.file)
     if fetcher is None:
         fetcher = fetch
@@ -468,7 +533,7 @@ def main(argv=None, fetcher=None, judge=None):
             allow = {h.strip(): True for h in a.allow_session.split(",") if h.strip()}
             fetcher = AccessLadder(tls=not a.no_tls, budget=a.budget,
                                    allow_session={**_load_allow(), **allow})
-    out = check(items, a.fuzzy, a.timeout, fetcher=fetcher, judge=judge)
+    out = check(items, a.fuzzy, a.timeout, fetcher=fetcher, judge=judge, pdf_extractor=pdf_extractor)
     out["summary"]["unsourced"] = unsourced
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:

@@ -27,7 +27,7 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adapters  # noqa: E402
-from cite_check import UA, alive, has_source_text, publisher, readable_text  # noqa: E402
+from cite_check import UA, alive, has_source_text, is_pdf, publisher, readable_text  # noqa: E402
 
 # ── 사유 코드 ────────────────────────────────────────────────────────────────
 # 기획(17 §4)의 8종 + dead. 죽은 링크는 인용 부패의 가장 흔한 형태인데 8종에 자리가
@@ -77,9 +77,11 @@ ALLOW_SESSION_PATH = os.environ.get(
 
 def classify(status, ctype, body):
     """읽지 못한 응답의 사유 코드. 본문 표식 → 상태 코드 순으로 본다."""
-    ctype, body = (ctype or ""), (body or "")
-    if alive(status) and "pdf" in ctype.lower():
+    ctype = ctype or ""
+    if alive(status) and is_pdf(ctype, body):
         return "pdf"
+    # PDF 가 아닌데 바이트라면 텍스트 표식을 찾을 수 없다. 스캔하지 않고 상태 코드로만 본다.
+    body = body if isinstance(body, str) else ""
     if status is None or status in (404, 410):
         return "dead"
     head = body[:200000]
@@ -155,9 +157,15 @@ def forwardable(url):
 
 
 def _readable(status, ctype, body):
-    """대조에 쓸 수 있는 진짜 본문인가 — 코어와 같은 기준을 쓴다."""
-    if not alive(status) or "pdf" in (ctype or "").lower():
+    """대조에 쓸 수 있는 진짜 본문인가 — 코어와 같은 기준을 쓴다.
+
+    PDF 는 받아온 것만으로 "닿았다" 로 친다. 그 안에 글자가 있는지는 추출기가 있어야 알 수
+    있고 그 판단은 코어의 몫이다 — 사다리가 여기서 미리 실패로 접으면, 추출기가 깔려 있어도
+    윗칸만 헛되이 오르고 결국 못 읽는다."""
+    if not alive(status):
         return False
+    if isinstance(body, bytes):
+        return True
     text, _ = readable_text(ctype, body)
     return has_source_text(status, text)
 
@@ -167,8 +175,12 @@ def _get(url, timeout, ua=UA, headers=None):
         # Request() raises on a malformed URL — inside the try, or one bad citation kills the run.
         req = Request(url, headers={"User-Agent": ua, "Accept": "text/html,*/*", **(headers or {})})
         with urlopen(req, timeout=timeout) as r:
-            body = r.read().decode(r.headers.get_content_charset() or "utf-8", "replace")
-            return r.status, r.headers.get("Content-Type", ""), body
+            ctype, raw = r.headers.get("Content-Type", ""), r.read()
+            # PDF 는 바이트 그대로 넘긴다. 여기서 문자열로 만들면("replace") 바이트가
+            # 되돌릴 수 없게 망가져 어떤 추출기도 읽을 수 없다 — 코어의 계약도 같다.
+            if is_pdf(ctype, raw):
+                return r.status, ctype, raw
+            return r.status, ctype, raw.decode(r.headers.get_content_charset() or "utf-8", "replace")
     except HTTPError as e:
         try:
             return e.code, e.headers.get("Content-Type", "") if e.headers else "", e.read().decode("utf-8", "replace")
@@ -234,7 +246,8 @@ class AccessLadder:
                 continue
             status, ctype, body = got
             # 이긴 칸의 본문만 보면, 아래 칸에서 이미 읽은 지시문을 놓친다.
-            tr["injection_suspect"] = tr["injection_suspect"] or injected(body)
+            # PDF 바이트에는 텍스트 패턴 검사를 걸 수 없다. 추출된 본문은 코어가 본다.
+            tr["injection_suspect"] = tr["injection_suspect"] or (isinstance(body, str) and injected(body))
             if _readable(status, ctype, body):
                 tr["attempts"].append(f"{n}:ok")
                 tr["via"] = n
@@ -243,7 +256,8 @@ class AccessLadder:
             last = got
             tr["attempts"].append(f"{n}:{status if status is not None else 'net-error'}")
             reason = classify(status, ctype, body)
-            # PDF 는 어느 칸에서도 v1이 못 읽는다. CAPTCHA 는 풀지 않지만(성역), 아래 칸에서 봤다고
+            # 여기 오는 PDF 는 응답 자체가 성립하지 않은 것이다(받아낸 PDF 는 위에서 이미 반환됐다).
+            # 윗칸이라고 살아 있는 응답이 되지 않으므로 더 오르지 않는다. CAPTCHA 는 풀지 않지만(성역), 아래 칸에서 봤다고
             # 멈추면 정작 사람 없이 통과되는 칸(3·4·5)을 못 간다 — 진짜 브라우저가 보고 나서야 끝이다.
             if reason == "pdf" or (reason == "captcha" and n >= 4):
                 return self._stop(url, tr, reason, got)
@@ -304,7 +318,8 @@ class AccessLadder:
             tr["attempts"].append("3:건너뜀(curl_cffi 미설치)")
             return None
         r = cffi.get(url, impersonate="chrome", timeout=timeout)
-        return r.status_code, r.headers.get("Content-Type", ""), r.text
+        ctype = r.headers.get("Content-Type", "")
+        return r.status_code, ctype, (r.content if is_pdf(ctype, r.content) else r.text)
 
     @rung(escalates=True)
     def _headless(self, url, timeout, tr, left):
