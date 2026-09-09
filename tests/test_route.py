@@ -89,14 +89,50 @@ class Route(unittest.TestCase):
                             "require_publication_date", "uncertainty", "sources", "signals"):
                     self.assertIn(key, t)
                 self.assertIn(t["depth"], ("L1", "L2", "L3"))
-        self.assertEqual(len(p["types"]), 3)
-        self.assertEqual(len(p["reserved"]), 6)          # 9유형 슬롯 중 v1은 셋
+        self.assertEqual(len(p["types"]), 9)
+        self.assertEqual(p["reserved"], [])              # 아홉 슬롯이 다 찼다
         self.assertIn(p["unsupported_default"], p["types"])
 
     def test_the_strictest_type_is_the_unsupported_default(self):
         p = r.load()
         self.assertEqual(p["unsupported_default"],
                          max(p["types"], key=lambda n: p["types"][n]["strictness"]))
+
+    def test_the_default_is_declared_first_so_ties_resolve_to_it(self):
+        """동점일 때 `max` 는 먼저 나온 것을 고른다. 파일 순서가 곧 동점 규칙이다."""
+        p = r.load()
+        top = max(t["strictness"] for t in p["types"].values())
+        first_at_top = next(n for n, t in p["types"].items() if t["strictness"] == top)
+        self.assertEqual(first_at_top, p["unsupported_default"])
+
+    def test_each_of_the_nine_types_routes_from_a_question_of_its_own(self):
+        cases = [("이 약의 부작용과 금기 사항이 뭐야", "medical-clinical"),
+                 ("개인정보보호법 시행령 몇 조에 있어?", "legal-regulatory"),
+                 ("이 사안 보도 내용이 어떻게 되나", "news-current-events"),
+                 ("이 회사 분기 영업이익이 얼마야", "market-competitive"),
+                 ("이 스택트레이스가 어느 커밋에서 났는지", "code-implementation"),
+                 ("그 사람 경력이 어떻게 되나", "people-organizations")]
+        for q, expect in cases:
+            with self.subTest(q=q):
+                self.assertEqual(self.kind(q), expect)
+
+    def test_a_medical_question_with_academic_signals_never_gets_the_looser_setting(self):
+        """의학과 학술이 함께 잡히면 어느 쪽이 이기든 느슨해지지 않아야 한다."""
+        out = r.route("이 치료의 무작위 임상시험 결과가 뭐야")
+        self.assertGreater(len(out["matched"]), 1)
+        self.assertEqual(out["settings"]["strictness"], 3)
+        self.assertGreaterEqual(out["settings"]["min_independent_publishers"], 2)
+
+    def test_every_uncertainty_line_says_what_goes_wrong_in_that_type(self):
+        """일반론이 아니라 그 유형에서 실제로 틀리는 방식을 적는다."""
+        p = r.load()
+        for name, t in p["types"].items():
+            with self.subTest(type=name):
+                self.assertGreater(len(t["uncertainty"]), 30)
+                self.assertNotIn("신중히", t["uncertainty"])
+        # 유형마다 서로 다른 문장이어야 한다 — 복사해 붙인 세팅은 세팅이 아니다
+        lines = [t["uncertainty"] for t in p["types"].values()]
+        self.assertEqual(len(set(lines)), len(lines))
 
     def test_settings_live_in_data_not_in_code(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "scripts", "route.py"),
