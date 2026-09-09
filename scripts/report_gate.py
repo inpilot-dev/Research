@@ -11,7 +11,9 @@
 import re
 import sys
 
-TOKEN = re.compile(r"\[[A-Za-z0-9.\-]+:(?:exact|fuzzy(?:\s+[0-9.]+)?)\]")
+# entails 는 L3(모델 판정)다. 게이트는 "검증을 거쳤는가"만 본다 — 어느 층이었는지는
+# 리포트가 줄마다 따로 적는다.
+TOKEN = re.compile(r"\[[A-Za-z0-9.\-]+:(?:exact|fuzzy(?:\s+[0-9.]+)?|entails)\]")
 SECTION = re.compile(r"^\s*#{1,6}\s*(.+?)\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
 # 섹션마다 요구하는 것이 다르다. 제목은 **정확히** 일치해야 한다 — 부분 일치로 두면

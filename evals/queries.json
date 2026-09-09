@@ -39,4 +39,20 @@
   {"claim":"The World Health Organization was founded in 1919 in Geneva","url":"https://www.who.int/about","expect":"none","why":"틀린 연도. 원문을 읽었고 그런 문장이 없다"}]},
 {"id":"fact-06","type":"quick-facts","question":"봇 벽 뒤의 출처를 인용하면 어떻게 되나?","claims":[
   {"claim":"Kaplan-Meier estimates of mortality were 6.7% with remdesivir by day 15","url":"https://www.nejm.org/doi/full/10.1056/NEJMoa2007764","expect":"blocked","why":"403 Cloudflare. 사실일 수도 있지만 우리는 확인하지 못했다 — 근거 없음으로 찍으면 거짓말이다"}]}
+,
+{"id":"sem-01","type":"semantic-entailment","question":"ACTT-1 에서 회복까지 걸린 시간은 위약군과 얼마나 달랐나?","claims":[
+  {"claim":"Remdesivir shortened the median time to recovery from fifteen days to ten days when compared with placebo.","url":"https://pubmed.ncbi.nlm.nih.gov/32445440/","expect":"entails","l3":true,"why":"바꿔 쓴 문장 — 원문은 10일 대 15일을 다른 어순으로 말한다. L2 는 못 잡는다"},
+  {"claim":"Remdesivir significantly reduced 28-day mortality when compared with placebo.","url":"https://pubmed.ncbi.nlm.nih.gov/32445440/","expect":"none","l3":true,"why":"그럴듯하지만 원문이 하지 않는 말. 29일차 사망률은 보고되지만 유의하다고 하지 않는다"}]},
+{"id":"sem-02","type":"semantic-entailment","question":"RECOVERY 에서 덱사메타손은 누구에게 효과가 있었나?","claims":[
+  {"claim":"Dexamethasone lowered 28-day mortality in patients on invasive mechanical ventilation but not in those who needed no respiratory support.","url":"https://pubmed.ncbi.nlm.nih.gov/32678530/","expect":"entails","l3":true,"why":"결론 문장을 요약한 것 — 의미는 그대로다"},
+  {"claim":"Patients in the RECOVERY trial received dexamethasone for 28 days.","url":"https://pubmed.ncbi.nlm.nih.gov/32678530/","expect":"none","l3":true,"why":"28 이라는 숫자가 원문에 있어 그럴듯하지만, 그것은 투여 기간이 아니라 평가 기간이다"}]},
+{"id":"sem-03","type":"semantic-entailment","question":"Solidarity 에서 렘데시비르는 사망을 줄였나?","claims":[
+  {"claim":"In the Solidarity trial, deaths among patients given remdesivir were essentially the same as among their controls.","url":"https://pubmed.ncbi.nlm.nih.gov/33264556/","expect":"entails","l3":true,"why":"301/2743 대 303/2708 을 말로 옮긴 것"},
+  {"claim":"The Solidarity trial found that interferon beta-1a reduced mortality in patients who were not ventilated.","url":"https://pubmed.ncbi.nlm.nih.gov/33264556/","expect":"none","l3":true,"why":"원문에 없는 하위군 효과. 인터페론 결과를 뒤집어 적었다"}]},
+{"id":"sem-04","type":"semantic-entailment","question":"코크란 리뷰는 몇 명을 모았고 무엇이라고 결론지었나?","claims":[
+  {"claim":"The review pooled five randomised trials covering 7452 participants, of whom roughly half were assigned to remdesivir.","url":"https://doi.org/10.1002/14651858.CD014962","expect":"entails","l3":true,"why":"3886/7452 를 \"roughly half\" 로 요약 — 산술이 아니라 의미 대조다"},
+  {"claim":"The review concluded that remdesivir reduces all-cause mortality at day 28.","url":"https://doi.org/10.1002/14651858.CD014962","expect":"none","l3":true,"why":"원문은 차이가 거의 없다고 말한다. 결론을 뒤집은 그럴듯한 문장"}]},
+{"id":"sem-05","type":"semantic-entailment","question":"difflib 의 SequenceMatcher 는 무엇을 비교할 수 있나?","claims":[
+  {"claim":"SequenceMatcher can compare sequences whose elements are hashable, not only strings.","url":"https://docs.python.org/3/library/difflib.html","expect":"entails","l3":true,"why":"문서의 서술을 바꿔 쓴 것"},
+  {"claim":"SequenceMatcher.ratio() runs in time linear in the length of its inputs.","url":"https://docs.python.org/3/library/difflib.html","expect":"none","l3":true,"why":"문서는 최악의 경우가 그보다 나쁘다고 말한다 — 그럴듯하지만 원문이 하지 않는 말"}]}
 ]

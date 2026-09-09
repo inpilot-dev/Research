@@ -9,7 +9,7 @@ from contextlib import redirect_stdout
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import eval_run as ev  # noqa: E402
 
-EXPECTED = {"exact", "fuzzy", "none", "blocked", "unsupported-pdf"}
+EXPECTED = {"exact", "fuzzy", "entails", "none", "blocked", "unsupported-pdf"}
 
 
 def queries():
@@ -22,7 +22,8 @@ class QuerySet(unittest.TestCase):
         counts = {}
         for q in queries():
             counts[q["type"]] = counts.get(q["type"], 0) + 1
-        self.assertEqual(counts, {"academic-literature": 7, "tech-docs": 7, "quick-facts": 6})
+        self.assertEqual(counts, {"academic-literature": 7, "tech-docs": 7, "quick-facts": 6,
+                                  "semantic-entailment": 5})
 
     def test_every_claim_says_what_it_expects_and_why(self):
         for q in queries():
@@ -33,9 +34,16 @@ class QuerySet(unittest.TestCase):
                     self.assertIn(c["expect"], EXPECTED)
                     self.assertTrue(c["why"].strip(), "기대값에는 이유가 붙어야 한다")
 
-    def test_all_three_verdicts_are_exercised(self):
+    def test_all_four_verdicts_are_exercised(self):
         got = {c["expect"] for q in queries() for c in q["claims"]}
-        self.assertEqual(got, {"exact", "none", "blocked"})
+        self.assertEqual(got, {"exact", "none", "blocked", "entails"})
+
+    def test_l3_cases_come_in_supported_and_unsupported_pairs(self):
+        """뒷받침되는 쪽만 모아 두면 판정기가 전부 예라고 해도 만점이 나온다."""
+        l3 = [c for q in queries() for c in q["claims"] if c.get("l3")]
+        self.assertGreaterEqual(len(l3), 10)
+        self.assertEqual(sum(c["expect"] == "entails" for c in l3),
+                         sum(c["expect"] == "none" for c in l3))
 
     def test_the_two_kinds_of_failure_are_kept_apart(self):
         """근거 없음과 확인 불가를 둘 다, 서로 다른 이유로 기대하는 쿼리가 있어야 한다."""
@@ -62,7 +70,16 @@ class Run(unittest.TestCase):
         for t in ("academic-literature", "tech-docs", "quick-facts"):
             self.assertIn(t, md)
         self.assertIn("**합계**", md)
-        self.assertEqual([r for r in rows if not r["ok"]], [])
+        self.assertEqual([r for r in rows if r["ok"] is False], [])
+
+    def test_l3_cases_are_skipped_not_scored_when_no_judge_is_given(self):
+        """판정기 없이 돌린 것을 통과로도 실패로도 적지 않는다 — 오프라인 평가는 여전히 초록이다."""
+        rows, tally = ev.run(queries(), ev.replay())
+        skipped = [r for r in rows if r["ok"] is None]
+        self.assertEqual(len(skipped), 10)
+        self.assertTrue(all(r["got"] == "L3 미실행" for r in skipped))
+        self.assertEqual(tally["semantic-entailment"], {"pass": 0, "total": 0, "skip": 10})
+        self.assertIn("미실행 10건", ev.report(rows, tally))
 
     def test_a_broken_expectation_shows_up_in_the_failure_list(self):
         qs = [dict(queries()[0])]

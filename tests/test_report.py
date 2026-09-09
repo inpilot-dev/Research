@@ -128,10 +128,9 @@ class Report(unittest.TestCase):
                 json.dump(CLAIMS, f)
             out, err = io.StringIO(), io.StringIO()
             with redirect_stdout(out), redirect_stderr(err):
-                code = cc.main([claims, "--report", "--json", results, "--deep", "--strict"], fetcher=fake_fetch)
+                code = cc.main([claims, "--report", "--json", results, "--strict"], fetcher=fake_fetch)
             self.assertEqual(code, 1)  # --strict: unverified present
             self.assertIn("## 검증됨", out.getvalue())
-            self.assertIn("L3", err.getvalue())  # --deep → notice, still L2
             with open(results) as f:
                 self.assertEqual(json.load(f)["summary"]["n"], 7)
         self.assertIs(cc.fetch, cc.fetch)  # no module-global mutation

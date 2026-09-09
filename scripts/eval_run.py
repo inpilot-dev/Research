@@ -74,22 +74,36 @@ def write_index(directory=FIXTURES):
         f.write("\n".join(lines) + "\n")
 
 
-def run(queries, fetcher):
-    """→ (rows, per-type tallies). 각 행은 한 주장의 기대와 실제."""
+def run(queries, fetcher, judge=None):
+    """→ (rows, per-type tallies). 각 행은 한 주장의 기대와 실제.
+
+    `"l3": true` 인 주장은 모델이 있어야 판정할 수 있다. 판정기 없이 돌리면 실패가 아니라
+    **미실행**으로 센다 — 오프라인 회귀 평가가 LLM 없다는 이유로 빨개지면 안 된다.
+    ponytail: 판정기는 l3 주장에만 넘긴다. L2 세트에 모델을 섞으면 결정론적 회귀가 흔들린다.
+    """
     rows = []
     for q in queries:
         for c in q["claims"]:
-            try:
-                out = cc.check([{"claim": c["claim"], "url": c["url"]}], fetcher=fetcher)
-                got = out["results"][0]["found"]
-            except KeyError:
-                got = "녹화본 없음"
+            l3 = bool(c.get("l3"))
+            if l3 and judge is None:
+                got, ok = "L3 미실행", None
+            else:
+                try:
+                    out = cc.check([{"claim": c["claim"], "url": c["url"]}], fetcher=fetcher,
+                                   judge=judge if l3 else None)
+                    got = out["results"][0]["found"]
+                except KeyError:
+                    got = "녹화본 없음"
+                ok = got == c["expect"]
             rows.append({"type": q["type"], "id": q["id"], "question": q["question"],
                          "url": c["url"], "expect": c["expect"], "got": got,
-                         "ok": got == c["expect"], "why": c.get("why", "")})
+                         "ok": ok, "why": c.get("why", "")})
     tally = {}
     for r in rows:
-        t = tally.setdefault(r["type"], {"pass": 0, "total": 0})
+        t = tally.setdefault(r["type"], {"pass": 0, "total": 0, "skip": 0})
+        if r["ok"] is None:
+            t["skip"] += 1
+            continue
         t["total"] += 1
         t["pass"] += bool(r["ok"])
     return rows, tally
@@ -99,13 +113,18 @@ def report(rows, tally):
     L = ["# 회귀 평가 — 유형별 통과율", "",
          "판정은 결정론적 코어가 한다. 아래 숫자는 **자기보고**다 — 우리가 만든 기대값을 우리가",
          "채점한 것이고, 사람이 검수한 결과가 아니다. 검수 절차는 `evals/HUMAN-REVIEW.md`.", "",
-         "| 유형 | 통과 | 전체 | 통과율 |", "|---|---|---|---|"]
+         "| 유형 | 통과 | 전체 | 통과율 | 미실행 |", "|---|---|---|---|---|"]
     for t in sorted(tally):
         v = tally[t]
-        L.append(f"| {t} | {v['pass']} | {v['total']} | {100 * v['pass'] // max(v['total'], 1)}% |")
+        rate = f"{100 * v['pass'] // v['total']}%" if v["total"] else "—"   # 안 돌린 것은 0% 가 아니다
+        L.append(f"| {t} | {v['pass']} | {v['total']} | {rate} | {v['skip']} |")
     tot_p, tot_n = sum(v["pass"] for v in tally.values()), sum(v["total"] for v in tally.values())
-    L.append(f"| **합계** | **{tot_p}** | **{tot_n}** | **{100 * tot_p // max(tot_n, 1)}%** |")
-    bad = [r for r in rows if not r["ok"]]
+    tot_s = sum(v["skip"] for v in tally.values())
+    L.append(f"| **합계** | **{tot_p}** | **{tot_n}** | **{100 * tot_p // max(tot_n, 1)}%** | **{tot_s}** |")
+    if tot_s:
+        L += ["", f"미실행 {tot_s}건은 L3 케이스다 — 판정기 없이 돌렸다. `--judge` 로 돌린다.",
+              "통과율에서 뺐다: 안 돌린 것을 통과로도 실패로도 적지 않는다."]
+    bad = [r for r in rows if r["ok"] is False]
     L += ["", f"## 실패 ({len(bad)})", ""]
     L += [f"- `{r['id']}` 기대 `{r['expect']}` → 실제 `{r['got']}` · {r['url']}\n  · {r['why']}"
           for r in bad] or ["없음."]
@@ -117,6 +136,7 @@ def main(argv=None):
     ap.add_argument("--live", action="store_true", help="녹화본 대신 실제로 받아온다")
     ap.add_argument("--record", action="store_true", help="받아온 응답을 녹화본으로 저장한다")
     ap.add_argument("--queries", default=os.path.join(ROOT, "queries.json"))
+    ap.add_argument("--judge", action="store_true", help="L3 케이스도 실제로 판정한다 (LLM 필요)")
     a = ap.parse_args(argv)
     with open(a.queries, encoding="utf-8") as f:
         queries = json.load(f)
@@ -135,9 +155,13 @@ def main(argv=None):
     missing = [u for u in urls if u not in fetcher.store]
     if missing:
         print("녹화본 없음(--live --record 로 받으십시오): " + "\n  ".join(missing), file=sys.stderr)
-    rows, tally = run(queries, fetcher)
+    judge = None
+    if a.judge:
+        from judge_llm import ClaudeCLI
+        judge = ClaudeCLI()
+    rows, tally = run(queries, fetcher, judge)
     sys.stdout.write(report(rows, tally))
-    return 1 if any(not r["ok"] for r in rows) else 0
+    return 1 if any(r["ok"] is False for r in rows) else 0
 
 
 if __name__ == "__main__":

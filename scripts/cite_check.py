@@ -3,12 +3,14 @@
 
 L1: does the source exist and respond?
 L2: does the claim sentence appear in the source text (exact or fuzzy)?
+L3: does the source *mean* the claim? --deep only, and only for claims L2 could not match.
+    An injected judge (scripts/judge_llm.py) answers; the core re-checks its quote against the
+    source deterministically. No quote in the source, no verdict (ADR 0001).
 Plus: unique-publisher count (circular-reporting dedup) and published date.
 
 Input  JSON: [{"claim": "...", "url": "..."}, ...]
 Output     : JSON {"results": [...], "summary": {...}} to stdout, or a markdown
              report with --report. --json PATH additionally writes results.json.
-             --deep is reserved (L3); v1 prints a notice and runs L2.
 
   python3 scripts/cite_check.py claims.json
   python3 scripts/cite_check.py claims.json --report --json results.json > report.md
@@ -170,11 +172,64 @@ def fetch(url, timeout=10):
         return None, "", ""
 
 
-KINDS = ("exact", "fuzzy", "none", "blocked", "unsupported-pdf")
+KINDS = ("exact", "fuzzy", "entails", "none", "blocked", "unsupported-pdf")
+
+# L3 — the one place a model touches a verdict. Everything around it stays deterministic.
+# ponytail: a quote shorter than this is not a sentence, it is a fragment that matches anything.
+L3_MIN_QUOTE = 24
 
 
-def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
-    results, cache = [], {}
+def _l3_verdict(claim, text, judge):
+    """One model call, deterministically re-checked. → (verdict, quote, error).
+
+    verdict is True (뒷받침) / False (뒷받침 안 됨) / None (판정을 얻지 못함). None is not False:
+    a failed call must leave the L2 result alone, not turn into 근거 없음 that reads as a finding.
+    The judge lives outside the core and may raise anything, so everything is caught.
+    """
+    try:
+        v = judge(claim, text)
+    except Exception as e:
+        return None, "", f"호출 실패({type(e).__name__})"
+    if not isinstance(v, dict):
+        return None, "", "응답 형식 오류"
+    quote = re.sub(r"\s+", " ", str(v.get("quote") or "")).strip()
+    if not v.get("supported"):
+        return False, quote, ""
+    if len(quote) < L3_MIN_QUOTE:
+        return None, quote, "근거 문장 없음"
+    if normalize(quote) not in normalize(text):
+        # 모델이 있지도 않은 문장을 지어냈다. 판정을 버린다 — 이것이 L3 를 결정론에 묶어 두는 못이다.
+        return None, quote, "근거 문장이 원문에 없음"
+    return True, quote, ""
+
+
+def _run_l3(results, texts, judge):
+    """L2 를 통과하지 못한 주장에만 L3 를 돌린다. → 감사 로그 집계.
+
+    손대는 것은 `none`(원문을 읽고 못 찾음) 뿐이다. `blocked`·`unsupported-pdf` 는 원문을
+    읽지 못한 것이므로 의미 판정의 대상이 아니다 — 모델이 확인 불가를 뒤집을 수 없다 (ADR 0002).
+    """
+    log = {"model": re.sub(r"\s+", " ", str(getattr(judge, "name", "unknown"))).strip(),
+           "ran": 0, "supported": 0, "unsupported": 0, "failed": 0, "errors": []}
+    for row in results:
+        if row["found"] != "none":
+            continue
+        log["ran"] += 1
+        verdict, quote, err = _l3_verdict(row["claim"], texts.get(row["url"], ""), judge)
+        if verdict is None:
+            log["failed"] += 1
+            log["errors"].append(err)
+            row["l3_error"] = err
+        elif verdict:
+            log["supported"] += 1
+            row["found"], row["quote"] = "entails", quote
+        else:
+            log["unsupported"] += 1
+    return log
+
+
+def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None):
+    results, cache, texts = [], {}, {}
     for it in items:
         claim, url = it["claim"], it["url"]
         if url not in cache:
@@ -188,6 +243,7 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
             kind = "unsupported-pdf"  # ponytail: PDF ceiling → PyMuPDF when needed
         elif ok:
             text, published = readable_text(ctype, body)
+            texts[url] = text
             if has_source_text(status, text):
                 kind, score = match(claim, text, fuzzy)
         row = {"claim": claim, "url": url, "alive": ok, "status": status,
@@ -208,6 +264,7 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
                     "브라우저에서 직접 열어 본문을 저장해 주시면 그 파일로 대조합니다",
                 ]
         results.append(row)
+    l3 = _run_l3(results, texts, judge) if judge is not None else None
     kinds = [r["found"] for r in results]
     usage = getattr(fetcher, "usage", None)
     summary = {"n": len(results), "alive": sum(r["alive"] for r in results),
@@ -215,6 +272,8 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch):
                "unique_publishers": len({r["publisher"] for r in results})}
     if usage:
         summary["api_usage"] = dict(usage)
+    if l3:
+        summary["l3"] = l3
     return {"results": results, "summary": summary}
 
 
@@ -222,6 +281,7 @@ _KO = {"none": "근거 없음", "blocked": "확인 불가", "unsupported-pdf": "
 _WHY = {"none": "출처 원문에 해당 문장이 없음",
         "blocked": "출처에 접근하지 못함(죽은 링크·차단·203 봇 벽·동의벽·빈 본문) — 근거 없음과 다르다",
         "unsupported-pdf": "PDF 본문 추출은 v1 미지원"}
+VERIFIED = ("exact", "fuzzy", "entails")
 UNVERIFIED = ("none", "blocked", "unsupported-pdf")
 
 
@@ -282,24 +342,39 @@ def _why(trace):
 def render(out, deep_requested=False):
     """results → markdown report. 검증됨 / 미확인 / 감사 로그. Unverified claims never become assertions."""
     r, s = out["results"], out["summary"]
-    ok = [x for x in r if x["found"] in ("exact", "fuzzy")]
+    ok = [x for x in r if x["found"] in VERIFIED]
     bad = [x for x in r if x["found"] in UNVERIFIED]
     L = ["# 검증 리포트", "", f"## 검증됨 ({len(ok)})", ""]
     for x in ok:
         tag = f"[{x['publisher']}:{x['found']}" + (f" {x['score']}" if x["found"] == "fuzzy" else "") + "]"
-        L.append(f"- {tag} {_line(x['claim'])} — L2 · {_line(x['published']) or '게시일 미상'} · {_line(x['url'])}"
+        # 기계가 대조한 것(L2)과 모델이 판단한 것(L3)을 사람이 섞어 읽으면 안 된다.
+        depth = "L3(의미) · 모델 판정" if x["found"] == "entails" else "L2"
+        L.append(f"- {tag} {_line(x['claim'])} — {depth} · {_line(x['published']) or '게시일 미상'} · {_line(x['url'])}"
                  + _how(x.get("trace")))
+        if x.get("quote"):
+            L.append(f"  · 근거 문장(원문에 있는지 기계가 재확인): {_line(x['quote'])}")
     L += ["", f"## 미확인 ({len(bad)})", "",
           "단정하지 않는다. 검증을 통과하지 못했다는 뜻이지 거짓이라는 뜻이 아니다.", ""]
     for x in bad:
         L.append(f"- {_KO[x['found']]}: {_line(x['claim'])} — {_line(x['url'])}")
         L += _why(x.get("trace"))
-    depth = "L2 (원문 텍스트 대조)" + (" — `--deep` 요청됨: L3(의미적 뒷받침)는 v1 미구현, L2로 진행" if deep_requested else "")
+    l3 = s.get("l3")
+    depth = "L2 (원문 텍스트 대조)"
+    if l3:
+        depth += " + L3 (의미적 뒷받침 — 모델 판정, 근거 문장은 원문에서 결정론적으로 재확인)"
+    elif deep_requested:
+        depth += " — `--deep` 요청됨: L3 판정기가 없어 L2 결과 그대로 둡니다"
     L += ["", "## 감사 로그", "",
           f"- 입력 {s['n']}건 · 페치 URL {len({x['url'] for x in r})}개",
           f"- 판정: exact {s['exact']} / fuzzy {s['fuzzy']} / none {s['none']} / blocked {s['blocked']} / pdf {s['unsupported_pdf']}",
           f"- 독립 퍼블리셔 {s['unique_publishers']} (www. 제거한 호스트 기준; 순환보고 1차 근사)",
           f"- 검증 깊이: {depth}"]
+    if l3:
+        L.append(f"- L3: {l3['ran']}건 시도 · 뒷받침 {l3['supported']} · 뒷받침 안 됨 {l3['unsupported']} · "
+                 f"실패 {l3['failed']} · 모델 {_line(l3['model'])}")
+        # 실패를 뭉뚱그리지 않는다 — 근거 문장 위조와 호출 실패는 다른 사건이다.
+        for e in sorted(set(l3["errors"])):
+            L.append(f"  - L3 실패({l3['errors'].count(e)}건): {_line(e)} — 해당 주장은 L2 결과 그대로")
     for api, meta in sorted((s.get("api_usage") or {}).items()):
         # "학술 API 는 공짜" 를 전제하지 않는다 — 응답이 알려준 비용·잔여를 그대로 적는다.
         L.append(f"- {api} 사용량: " + " · ".join(f"{k}={v}" for k, v in sorted(meta.items())))
@@ -362,7 +437,7 @@ def unverified_count(summary):
     return sum(summary[k.replace("-", "_")] for k in UNVERIFIED)
 
 
-def main(argv=None, fetcher=None):
+def main(argv=None, fetcher=None, judge=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("file", help="claims JSON path, or - for stdin")
     ap.add_argument("--fuzzy", type=float, default=0.85, help="fuzzy match threshold (default 0.85)")
@@ -370,15 +445,21 @@ def main(argv=None, fetcher=None):
     ap.add_argument("--strict", action="store_true", help="exit 1 if any claim is unverified (none/blocked/pdf)")
     ap.add_argument("--report", action="store_true", help="print a markdown report instead of JSON")
     ap.add_argument("--json", metavar="PATH", help="also write results JSON to PATH (one fetch, both artifacts)")
-    ap.add_argument("--deep", action="store_true", help="request L3 (semantic) — reserved, v1 runs L2 only")
+    ap.add_argument("--deep", action="store_true",
+                    help="run L3 (semantic entailment) on claims L2 could not match — needs an LLM judge")
+    ap.add_argument("--model", help="model for the L3 judge (default: the claude CLI default)")
     ap.add_argument("--no-access", action="store_true", help="plain fetch only — no access ladder")
     ap.add_argument("--no-tls", action="store_true", help="disable rung 3 (TLS impersonation)")
     ap.add_argument("--allow-session", metavar="HOSTS", default="",
                     help="comma-separated hosts whose already-logged-in browser session may be read (rung 5)")
     ap.add_argument("--budget", type=float, default=30.0, help="seconds per URL across the whole ladder")
     a = ap.parse_args(argv)
-    if a.deep:
-        print("[cite_check] --deep: L3(의미적 뒷받침)는 v1 미구현 — L2(원문 대조)로 진행합니다.", file=sys.stderr)
+    if a.deep and judge is None:
+        try:  # lazy: 판정기는 코어 밖이다. 없으면 L2 결과 그대로 남고 감사 로그에 그렇게 적힌다.
+            from judge_llm import ClaudeCLI
+            judge = ClaudeCLI(model=a.model)
+        except Exception as e:
+            print(f"[cite_check] --deep: L3 판정기를 쓸 수 없습니다 ({e}) — L2 결과 그대로 둡니다.", file=sys.stderr)
     items, unsourced = load_claims(a.file)
     if fetcher is None:
         fetcher = fetch
@@ -387,7 +468,7 @@ def main(argv=None, fetcher=None):
             allow = {h.strip(): True for h in a.allow_session.split(",") if h.strip()}
             fetcher = AccessLadder(tls=not a.no_tls, budget=a.budget,
                                    allow_session={**_load_allow(), **allow})
-    out = check(items, a.fuzzy, a.timeout, fetcher=fetcher)
+    out = check(items, a.fuzzy, a.timeout, fetcher=fetcher, judge=judge)
     out["summary"]["unsourced"] = unsourced
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
