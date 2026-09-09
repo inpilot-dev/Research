@@ -33,6 +33,7 @@ playwright 를 깔지 않았다. `curl_cffi` 는 403 다섯 곳 중 셋을 열�
 |---|---|
 | `scripts/` | 결정론적 코어와 도구 (판정·접근 사다리·어댑터·추출·라우터·게이트·종합·평가) |
 | `skills/`, `agents/`, `hooks/` | 플러그인 표면 |
+| `AGENTS.md`, `.agents/skills/` | Codex 표면. 절차는 `skills/` 를 가리키는 얇은 파일이고, **훅이 없어 게이트가 약하다는 사실**을 적는다. 고치면 `tests/test_codex_port.py` 가 동기화를 본다 |
 | `sources/`, `profiles/` | 어댑터·유형 설정 데이터 |
 | `evals/` | 회귀 평가 세트·녹화본·판정기·검수 절차 |
 | `docs/adr/` | 설계 결정. `CONTEXT.md` 는 용어집 |

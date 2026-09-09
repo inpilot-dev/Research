@@ -94,6 +94,24 @@ L2 는 문장이 원문에 **그대로** 있어야 잡는다. 요약하거나 �
 
 이 경계는 문서가 아니라 테스트다 — `tests/test_access_ladder.py` 가 브라우저에서 도는 스크립트의 **허용된 이름 목록**을 검사한다.
 
+## 두 하네스 — Claude Code 와 Codex
+
+같은 스킬팩을 Codex 에서도 쓴다. **코어(`scripts/`)는 하네스와 무관하게 같은 파일이 돈다** — 복사본이 없다. 갈리는 것은 코어 바깥이고, 갈린 만큼 Codex 판이 약하다.
+
+| | Claude Code | Codex |
+|---|---|---|
+| 스킬 위치 | `skills/<name>/SKILL.md` (플러그인) | `.agents/skills/<name>/SKILL.md` — 절차는 `skills/` 를 가리키고 차이만 적은 얇은 파일 |
+| 상시 규칙 | `CLAUDE.md` | `AGENTS.md` |
+| 호출 | `/verify` · `/research` | `$verify` · `$research` |
+| 판정 코어 | `scripts/` — **같은 파일** | `scripts/` — **같은 파일** |
+| **쓰기 게이트** | `hooks/gate.py` PreToolUse 훅. 모델이 못 끄고 못 무시한다 | **없다.** 훅 상당 기능이 없다 — **토큰 없는 단정문이 파일로 나갈 수 있다** |
+| 게이트 차선책 | 필요 없다 (자동) | 리포트를 쓴 뒤 `python3 scripts/report_gate.py <파일>` 를 **손으로** 돌린다 (종료 코드 2). 또는 `cite_check.py --strict` (종료 코드 1). 둘 다 사후·수동이라 건너뛸 수 있다 |
+| 리더 격리 | `agents/reader.md` — 출처 하나당 격리된 읽기 전용 서브에이전트 | 서브에이전트가 없다. 한 컨텍스트에서 한 출처씩 읽는다 — **격리가 약하고 인젝션이 번질 수 있다** |
+| L3 (`--deep`) | `scripts/judge_llm.py` 가 `claude -p` 를 부른다 | `claude` CLI 가 없으면 L3 는 돌지 않는다. 그 주장은 L2 결과 그대로 남고 감사 로그에 `L3 실패` 가 적힌다 |
+| `${CLAUDE_PLUGIN_ROOT}` | 하네스가 채운다 | 없다 — 저장소 루트로 읽는다 |
+
+**이 제품의 정체성이 게이트인 이상, 게이트가 약한 판을 내면서 약하다고 말하지 않을 수는 없다.** Codex 판은 게이트가 강제되지 않는 판이다. 본격 지원은 Codex 에 훅 상당 기능이 생기면 한다. 자세한 것은 [`AGENTS.md`](AGENTS.md).
+
 ## 아직 못 하는 것
 
 정직하게 적는다. 아래는 계획이 아니라 **현재 없는 기능**이다.
