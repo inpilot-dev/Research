@@ -37,7 +37,7 @@ class _Text(HTMLParser):
 
     def __init__(self):
         super().__init__()
-        self.parts, self.published, self._skip = [], None, 0
+        self.parts, self.published, self.canonical, self._skip = [], None, None, 0
 
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style", "noscript"):
@@ -49,6 +49,9 @@ class _Text(HTMLParser):
                 self.published = a["content"]
         if tag == "time" and not self.published and a.get("datetime"):
             self.published = a["datetime"]
+        # 그 페이지가 스스로 "원본은 저기"라고 밝힌 것. 순환보고 판별의 재료다 (origins.py).
+        if tag == "link" and not self.canonical and "canonical" in (a.get("rel") or "").lower():
+            self.canonical = a.get("href")
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "noscript") and self._skip:
@@ -75,7 +78,7 @@ def is_html(ctype, body):
 
 
 def extract(html_text):
-    """Return (visible_text, published_date_or_None)."""
+    """Return (visible_text, published_date_or_None). canonical 은 _Text 에서 따로 읽는다."""
     p = _Text()
     p.feed(html_text)
     return re.sub(r"\s+", " ", " ".join(p.parts)).strip(), p.published
@@ -86,6 +89,15 @@ def readable_text(ctype, body):
     if is_html(ctype, body):
         return extract(body or "")
     return re.sub(r"\s+", " ", body or "").strip(), None
+
+
+def _canonical_of(ctype, body):
+    """<link rel=canonical> 하나. 마크업이 아니면 없다."""
+    if not is_html(ctype, body) or not isinstance(body, str):
+        return None
+    p = _Text()
+    p.feed(body)
+    return p.canonical
 
 
 def normalize(s):
@@ -245,6 +257,30 @@ def _run_l3(results, texts, judge):
     return log
 
 
+def _resolve_origins(results, texts, canon):
+    """각 행에 `origin` 을 붙이고, 접힌 것들의 사유를 모은다 → [(퍼블리셔, 원출처, 사유)].
+
+    실패해도 판정을 막지 않는다 — 데이터 파일이 깨졌다고 검증 전체가 멈추면 안 된다.
+    그 경우 지금까지처럼 호스트별로 센다(부풀리는 쪽이므로 감사 로그에 남긴다).
+    """
+    rows = [{"publisher": r["publisher"], "url": r["url"],
+             "text": texts.get(r["url"], ""), "canonical": canon.get(r["url"])} for r in results]
+    try:
+        from origins import identify          # lazy: 코어는 이 파일 없이도 돈다
+        ids = identify(rows)
+    except Exception as e:
+        for r in results:
+            r["origin"] = r["publisher"]
+        return [("", "", f"순환보고 판별을 돌리지 못했습니다({type(e).__name__}) — 호스트 기준으로 셌습니다")]
+    seen, out = set(), []
+    for r, (identity, why) in zip(results, ids):
+        r["origin"] = identity or r["publisher"]
+        if why and (key := (r["publisher"], r["origin"])) not in seen:
+            seen.add(key)
+            out.append((r["publisher"], r["origin"], why))
+    return out
+
+
 def _pdf_text(body, extractor):
     """PDF 바이트 → (텍스트, 사유). 사유가 있으면 대조하지 않는다.
 
@@ -264,7 +300,7 @@ def _pdf_text(body, extractor):
 
 
 def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extractor=None):
-    results, cache, texts, pdf_note = [], {}, {}, []
+    results, cache, texts, pdf_note, canon = [], {}, {}, [], {}
     for it in items:
         claim, url = it["claim"], it["url"]
         if url not in cache:
@@ -291,6 +327,7 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extracto
         elif ok:
             text, published = readable_text(ctype, body)
             texts[url] = text
+            canon[url] = _canonical_of(ctype, body)
             if has_source_text(status, text):
                 kind, score = match(claim, text, fuzzy)
         row = {"claim": claim, "url": url, "alive": ok, "status": status,
@@ -312,11 +349,15 @@ def check(items, fuzzy=0.85, timeout=10, fetcher=fetch, judge=None, pdf_extracto
                 ]
         results.append(row)
     l3 = _run_l3(results, texts, judge) if judge is not None else None
+    collapsed = _resolve_origins(results, texts, canon)
     kinds = [r["found"] for r in results]
     usage = getattr(fetcher, "usage", None)
     summary = {"n": len(results), "alive": sum(r["alive"] for r in results),
                **{k.replace("-", "_"): kinds.count(k) for k in KINDS},
-               "unique_publishers": len({r["publisher"] for r in results})}
+               # 호스트 수가 아니라 **원출처 수**다. 한 곳이 한 말을 세 곳이 한 말처럼 세지 않는다.
+               "unique_publishers": len({r["origin"] for r in results})}
+    if collapsed:
+        summary["collapsed"] = collapsed
     if usage:
         summary["api_usage"] = dict(usage)
     if l3:
@@ -417,8 +458,12 @@ def render(out, deep_requested=False):
     L += ["", "## 감사 로그", "",
           f"- 입력 {s['n']}건 · 페치 URL {len({x['url'] for x in r})}개",
           f"- 판정: exact {s['exact']} / fuzzy {s['fuzzy']} / none {s['none']} / blocked {s['blocked']} / pdf {s['unsupported_pdf']}",
-          f"- 독립 퍼블리셔 {s['unique_publishers']} (www. 제거한 호스트 기준; 순환보고 1차 근사)",
+          f"- 독립 퍼블리셔 {s['unique_publishers']} (원출처 기준 — 통신사 크레딧·canonical·소유주·문단 중복으로 수렴 판정)",
           f"- 검증 깊이: {depth}"]
+    for pub, origin, why in (s.get("collapsed") or []):
+        # 조용히 숫자만 줄이지 않는다. 왜 하나로 셌는지 사람이 읽고 반박할 수 있어야 한다.
+        L.append(f"- 원출처 수렴: {_line(pub) or '(판별 실패)'}"
+                 + (f" → {_line(origin)}" if origin else "") + f" · {_line(why)}")
     if pdf := s.get("pdf"):
         marks = {"missing": f"추출기 없어 건너뜀 {pdf.get('missing', 0)}건",
                  "scan": f"스캔본(텍스트 층 없음) {pdf.get('scan', 0)}건 — 확인 불가",

@@ -1,0 +1,32 @@
+{
+  "_note": "순환보고 판별용 데이터. 코드가 아니다 (ADR 0002). `sources/` 가 아니라 여기 있는 것은 `sources/*.json` 이 어댑터 레지스트리 전용이기 때문이다. — 새 통신사·새 소유주는 여기에 줄을 더한다. 목록에 없으면 그 신호를 못 잡을 뿐이고, 못 잡으면 지금까지처럼 호스트별로 센다(부풀리는 쪽). 그래서 목록은 넓히기만 하면 되고 코드를 고칠 일이 없다.",
+
+  "owners": {
+    "_note": "같은 소유주가 굴리는 도메인 묶음. 한 회사가 여러 매체로 같은 기사를 실으면 독립 출처가 아니다.",
+    "news-corp": ["wsj.com", "nypost.com", "thetimes.co.uk", "thesun.co.uk", "foxnews.com"],
+    "conde-nast": ["newyorker.com", "wired.com", "arstechnica.com", "vanityfair.com"],
+    "vox-media": ["vox.com", "theverge.com", "polygon.com", "eater.com"],
+    "future-plc": ["techradar.com", "tomshardware.com", "pcgamer.com", "space.com", "livescience.com"],
+    "ziff-davis": ["pcmag.com", "mashable.com", "zdnet.com", "ign.com"],
+    "hearst": ["esquire.com", "cosmopolitan.com", "elle.com", "popularmechanics.com"],
+    "springer-nature": ["nature.com", "scientificamerican.com", "biomedcentral.com", "springer.com"],
+    "elsevier": ["sciencedirect.com", "cell.com", "thelancet.com", "ssrn.com"],
+    "chosun": ["chosun.com", "biz.chosun.com", "tvchosun.com"],
+    "joongang": ["joongang.co.kr", "jtbc.co.kr", "isplus.com"],
+    "hankyoreh": ["hani.co.kr", "h21.hani.co.kr"]
+  },
+
+  "wire": {
+    "_note": "통신사 크레딧 문구. 매체가 자기 취재로 쓴 것이 아니라 통신사 기사를 실었다는 표시다. 본문 앞부분에서만 찾는다 — 기사 끝의 '관련 기사' 목록에 걸리면 안 된다.",
+    "reuters": ["(reuters)", "- reuters", "— reuters", "reporting by reuters", "로이터통신", "로이터=", "reuters -"],
+    "associated-press": ["(ap)", "— the associated press", "- the associated press", "associated press contributed", "ap통신", "ap=", "by the associated press"],
+    "afp": ["(afp)", "— afp", "- afp", "afp통신", "afp=", "agence france-presse"],
+    "bloomberg": ["(bloomberg)", "— bloomberg", "bloomberg news contributed", "블룸버그통신"],
+    "yonhap": ["연합뉴스 제공", "(연합뉴스)", "연합뉴스=", "yonhap news agency", "(yonhap)"],
+    "newsis": ["(뉴시스)", "뉴시스 제공", "뉴시스="],
+    "news1": ["(뉴스1)", "뉴스1 제공", "뉴스1="],
+    "pa-media": ["(pa media)", "— pa media", "press association"],
+    "kyodo": ["(kyodo)", "kyodo news", "교도통신"],
+    "xinhua": ["(xinhua)", "xinhua news agency", "신화통신"]
+  }
+}

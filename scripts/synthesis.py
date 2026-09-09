@@ -32,7 +32,9 @@ def _group(verified):
     for c in verified:
         key = normalize(c["claim"])
         g = out.setdefault(key, {**c, "_publishers": set()})
-        g["_publishers"].add(c.get("publisher") or "")
+        # 세는 것은 호스트가 아니라 **원출처**다. 같은 통신사 기사를 실은 매체 셋은 하나다.
+        # origin 이 없으면(구버전 입력) 지금까지처럼 퍼블리셔로 센다.
+        g["_publishers"].add(c.get("origin") or c.get("publisher") or "")
         if c.get("injection_suspect"):
             g["injection_suspect"] = True
         if c.get("conflict") == "conflict":
