@@ -129,6 +129,21 @@ class DataNotCode(unittest.TestCase):
         self.assertEqual(owners["thelancet.com"], "elsevier")
         self.assertNotIn("_note", wire)          # 주석 키가 통신사로 새어 들어가지 않는다
 
+    def test_news_corp_and_fox_are_not_the_same_owner(self):
+        """2013 분할 이후 별개 상장사다. 틀린 묶음은 **있는 합의를 없다고 만든다** — 반대 방향 결함."""
+        owners, _ = og.load()
+        self.assertEqual(owners["wsj.com"], "news-corp")
+        self.assertEqual(owners["foxnews.com"], "fox-corporation")
+        self.assertNotEqual(owners["wsj.com"], owners["foxnews.com"])
+
+    def test_the_data_file_says_which_rows_were_actually_checked(self):
+        """대조하지 않은 항목을 대조한 것처럼 두지 않는다 — 이 파일은 사실이 틀릴 수 있는 데이터다."""
+        with open(os.path.join(os.path.dirname(__file__), "..", "profiles", "publishers.json"),
+                  encoding="utf-8") as f:
+            d = json.load(f)
+        self.assertIn("_verified", d)
+        self.assertIn("아직 출처를 대조하지 않았다", d["_verified"])
+
     def test_the_data_file_is_not_read_as_an_adapter(self):
         """`sources/*.json` 은 어댑터 레지스트리 전용이다 — 거기 두면 레지스트리가 깨진다."""
         import adapters as ad
