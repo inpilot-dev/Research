@@ -43,26 +43,42 @@ JSON 객체 하나만 출력한다. 다른 말은 쓰지 않는다:
 """
 
 
-def window(claim, text, limit=MAX_CHARS):
-    """원문이 길면 **주장과 가장 겹치는 구간**을 잘라 보낸다.
+ELISION = "\n[…중략…]\n"
+
+
+def window(claim, text, limit=MAX_CHARS, parts=2):
+    """원문이 길면 **주장과 가장 겹치는 구간들**을 잘라 보낸다.
 
     앞에서부터 자르면 안 된다 — PubMed 페이지는 초록 앞에 공동연구자 명단이 수천 명 붙는다.
     실측(2026-09-09): RECOVERY·Solidarity 두 건이 명단에서 잘려 초록이 통째로 사라졌고,
     원문이 그대로 말하는 문장이 `근거 없음` 으로 나왔다.
 
-    ponytail: 낱말 겹침으로 창 하나를 고른다. 근거가 두 구간에 흩어져 있으면 놓친다 —
-    놓치면 근거 없음으로 남을 뿐 거짓 판정은 아니다. 필요해지면 상위 두 창을 이어 보낸다.
+    창을 둘로 나눠 보낸다. 근거가 서로 떨어진 두 곳(방법과 결과, 본문과 표)에 나뉘어 있는
+    것이 논문에서는 오히려 흔하다. 겹치는 창은 고르지 않는다 — 같은 글을 두 번 보내는 것은
+    창을 하나 버리는 것과 같다.
+
+    이어 붙인 자리는 `[…중략…]` 로 표시한다. 모델이 그 경계를 넘어 문장을 만들어 내면 코어의
+    재확인에서 걸려 판정이 버려진다 — 실패가 안전한 쪽으로 떨어진다.
+
+    ponytail: 창 두 개까지. 세 곳 이상에 흩어진 근거는 여전히 놓치고, 놓치면 `근거 없음` 으로
+    남을 뿐 거짓 판정은 아니다.
     """
     if len(text) <= limit:
         return text
     words = set(re.findall(r"[a-z0-9]{4,}|[가-힣]{2,}", claim.lower()))
-    step = max(limit // 2, 1)
-    best, best_hit = 0, -1
-    for i in range(0, len(text), step):
-        hit = sum(w in text[i:i + limit].lower() for w in words)
-        if hit > best_hit:
-            best, best_hit = i, hit
-    return text[best:best + limit]
+    span = max((limit - len(ELISION) * (parts - 1)) // max(parts, 1), 1)
+    step = max(span // 2, 1)
+    scored = sorted(((sum(w in text[i:i + span].lower() for w in words), -i)
+                     for i in range(0, len(text), step)), reverse=True)
+    chosen = []
+    for _, neg_i in scored:
+        i = -neg_i
+        if len(chosen) >= parts:
+            break
+        if any(abs(i - j) < span for j in chosen):
+            continue                      # 이미 고른 창과 겹친다 — 새로 보여 줄 것이 없다
+        chosen.append(i)
+    return ELISION.join(text[i:i + span] for i in sorted(chosen))
 
 
 CONFLICT_INSTRUCTIONS = """너는 인용 검증기의 상충 판정기다. 뒤이어 두 개의 **주장**과 각각의
@@ -153,6 +169,12 @@ def demo():
     # 창은 앞이 아니라 주장이 있는 곳을 고른다 — 이 한 줄이 실측한 두 건의 원인이었다.
     long = "collaborator names " * 3000 + "Mortality was 6.7% with remdesivir. " + "tail " * 3000
     assert "Mortality was 6.7%" in window("mortality remdesivir", long, 2000)
+    # 떨어져 있는 두 근거를 둘 다 실어 보낸다.
+    split = ("pad " * 2000 + "The primary outcome was time to recovery. " + "pad " * 4000
+             + "Mortality was 6.7% with remdesivir. " + "pad " * 2000)
+    w = window("primary outcome recovery mortality remdesivir", split, 3000)
+    assert "primary outcome" in w and "Mortality was 6.7%" in w, w[:200]
+    assert len(w) <= 3000 and ELISION in w
     print("ok")
 
 

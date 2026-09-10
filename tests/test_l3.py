@@ -129,6 +129,31 @@ class L3(unittest.TestCase):
         self.assertGreater(len(page), judge_llm.MAX_CHARS)
         self.assertIn(SENT, judge_llm.window(PARAPHRASE, page))
 
+    def test_evidence_split_across_two_distant_places_both_get_sent(self):
+        """논문에서는 방법과 결과처럼 근거가 떨어져 있는 것이 오히려 흔하다."""
+        import judge_llm
+        far = ("잡음 " * 3000 + "The primary outcome was the time to recovery. " + "잡음 " * 6000
+               + SENT + " " + "잡음 " * 3000)
+        w = judge_llm.window("primary outcome recovery median days placebo", far, 4000)
+        self.assertIn("The primary outcome was the time to recovery.", w)
+        self.assertIn(SENT, w)
+        self.assertLessEqual(len(w), 4000)
+
+    def test_the_two_windows_never_overlap(self):
+        """겹치는 창을 둘 고르면 같은 글을 두 번 보내는 것이고, 창 하나를 버리는 것과 같다."""
+        import judge_llm
+        page = "잡음 " * 1000 + SENT + " " + "잡음 " * 5000
+        w = judge_llm.window(PARAPHRASE, page, 3000)
+        self.assertEqual(w.count(SENT), 1)
+
+    def test_a_quote_spanning_the_elision_is_thrown_away_not_trusted(self):
+        """이어 붙인 자리를 넘어 문장을 만들어 내면 코어의 재확인에서 걸린다 — 안전한 쪽 실패."""
+        import judge_llm
+        forged = "The primary outcome was the time to recovery. " + judge_llm.ELISION + SENT
+        row, _, _ = run((True, forged))
+        self.assertEqual(row["found"], "none")
+        self.assertEqual(row["l3_error"], "근거 문장이 원문에 없음")
+
     def test_no_judge_binary_means_no_judge_at_all(self):
         """판정기를 못 만들면 예외다 — 조용히 없는 판정기로 도는 경로는 없다."""
         import judge_llm
